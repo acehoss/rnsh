@@ -28,7 +28,7 @@ def tty_add_reader_callback(fd: int, callback: callable, loop: asyncio.AbstractE
             data = tty_read(fd)
             # do something with data
 
-        tty_add_reader_callback(self._si, reader, self._loop)
+        tty_add_reader_callback(self._child_fd, reader, self._loop)
 
     :param fd: file descriptor
     :param callback: callback function
@@ -173,6 +173,7 @@ class CallbackSubprocess:
         self._stdout_cb = stdout_callback
         self._terminated_cb = terminated_callback
         self._pid: int | None = None
+        self._child_fd: int | None = None
 
     def terminate(self, kill_delay: float = 1.0):
         """
@@ -225,7 +226,7 @@ class CallbackSubprocess:
         :param data: bytes to write
         """
         self.log.debug(f"write({data})")
-        os.write(self._si, data)
+        os.write(self._child_fd, data)
 
     def set_winsize(self, r: int, c: int, h: int, v: int):
         """
@@ -237,7 +238,7 @@ class CallbackSubprocess:
         :return:
         """
         self.log.debug(f"set_winsize({r},{c},{h},{v}")
-        tty_set_winsize(self._si, r, c, h, v)
+        tty_set_winsize(self._child_fd, r, c, h, v)
 
     def copy_winsize(self, fromfd:int):
         """
@@ -253,14 +254,14 @@ class CallbackSubprocess:
         :param when: when to apply change: termios.TCSANOW or termios.TCSADRAIN or termios.TCSAFLUSH
         :param attr: attributes to set
         """
-        termios.tcsetattr(self._si, when, attr)
+        termios.tcsetattr(self._child_fd, when, attr)
 
     def tcgetattr(self) -> list[int | list[int | bytes]]:
         """
         Get tty attributes.
         :return: tty attributes value
         """
-        return termios.tcgetattr(self._si)
+        return termios.tcgetattr(self._child_fd)
 
     def start(self):
         """
@@ -273,7 +274,7 @@ class CallbackSubprocess:
                "LANG": parentenv.get("LANG"),
                "SHELL": self._command[0]}
 
-        self._pid, self._si = pty.fork()
+        self._pid, self._child_fd = pty.fork()
 
         if self._pid == 0:
             try:
@@ -304,7 +305,7 @@ class CallbackSubprocess:
             except:
                 pass
 
-        tty_add_reader_callback(self._si, functools.partial(reader, self._si, self._stdout_cb), self._loop)
+        tty_add_reader_callback(self._child_fd, functools.partial(reader, self._child_fd, self._stdout_cb), self._loop)
 
 async def main():
     """
@@ -356,7 +357,8 @@ async def main():
 
     tty_add_reader_callback(sys.stdin.fileno(), stdin)
     process.start()
-    # process.tcsetattr(termios.tcgetattr(sys.stdin))
+    # call_soon called it too soon, not sure why.
+    loop.call_later(0.001, functools.partial(process.copy_winsize, sys.stdin.fileno()))
 
     val = await retcode
     log.debug(f"got retcode {val}")
