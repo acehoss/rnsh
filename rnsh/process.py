@@ -174,6 +174,7 @@ class CallbackSubprocess:
         self._terminated_cb = terminated_callback
         self._pid: int | None = None
         self._child_fd: int | None = None
+        self._return_code: int | None = None
 
     def terminate(self, kill_delay: float = 1.0):
         """
@@ -287,10 +288,10 @@ class CallbackSubprocess:
         def poll():
             # self.log.debug("poll")
             try:
-                pid, rc = os.waitpid(self._pid, os.WNOHANG)
-                if rc is not None and not process_exists(self._pid):
-                    self.log.debug(f"polled return code {rc}")
-                    self._terminated_cb(rc)
+                pid, self._return_code = os.waitpid(self._pid, os.WNOHANG)
+                if self._return_code is not None and not process_exists(self._pid):
+                    self.log.debug(f"polled return code {self._return_code}")
+                    self._terminated_cb(self._return_code)
                 self._loop.call_later(CallbackSubprocess.PROCESS_POLL_TIME, poll)
             except Exception as e:
                 self.log.debug(f"Error in process poll: {e}")
@@ -306,6 +307,10 @@ class CallbackSubprocess:
                 pass
 
         tty_add_reader_callback(self._child_fd, functools.partial(reader, self._child_fd, self._stdout_cb), self._loop)
+
+    @property
+    def return_code(self) -> int | None:
+        return self._return_code
 
 async def main():
     """
