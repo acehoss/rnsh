@@ -197,7 +197,7 @@ class CallbackSubprocess:
             except:
                 pass
 
-        self._loop.call_later(1, kill)
+        self._loop.call_later(kill_delay, kill)
 
         def wait():
             self.log.debug("wait()")
