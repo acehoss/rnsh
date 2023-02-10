@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import errno
 import functools
 import signal
@@ -143,6 +144,20 @@ class TtyRestorer:
         Restore termios settings to state captured in constructor.
         """
         termios.tcsetattr(self._fd, termios.TCSADRAIN, self._tattr)
+
+
+async def event_wait(evt: asyncio.Event, timeout: float) -> bool:
+    """
+    Wait for event to be set, or timeout to expire.
+    :param evt: asyncio.Event to wait on
+    :param timeout: maximum number of seconds to wait.
+    :return: True if event was set, False if timeout expired
+    """
+    # suppress TimeoutError because we'll return False in case of timeout
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(evt.wait(), timeout)
+    return evt.is_set()
+
 
 class CallbackSubprocess:
     # time between checks of child process
@@ -308,6 +323,31 @@ class CallbackSubprocess:
     @property
     def return_code(self) -> int | None:
         return self._return_code
+
+# # from https://gist.github.com/bruce-shi/fd0e3f5e2360c64bc9ce2efb254744f7
+# from collections import defaultdict
+# class disable_signals(object):
+#     def __init__(self, disabled_signals=None):
+#         self.stashed_signals = defaultdict(list)
+#         self.disabled_signals = disabled_signals or []
+#
+#     def __enter__(self):
+#         for signal in self.disabled_signals:
+#             self.disconnect(signal)
+#
+#     def __exit__(self, exc_type, exc_val, exc_tb):
+#         for signal in list(self.stashed_signals):
+#             self.reconnect(signal)
+#
+#     def disconnect(self, signal):
+#         self.stashed_signals[signal] = signal.receivers
+#         signal.receivers = []
+#
+#     def reconnect(self, signal):
+#         signal.receivers = self.stashed_signals.get(signal, [])
+#         del self.stashed_signals[signal]
+#         signal.sender_receivers_cache.clear()
+
 
 async def main():
     """
