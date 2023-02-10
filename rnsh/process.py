@@ -9,13 +9,10 @@ import pty
 import os
 import asyncio
 import sys
-
-import logging as __logging
-
 import fcntl
 import select
 import termios
-
+import logging as __logging
 module_logger = __logging.getLogger(__name__)
 
 def tty_add_reader_callback(fd: int, callback: callable, loop: asyncio.AbstractEventLoop | None = None):
@@ -165,8 +162,8 @@ class CallbackSubprocess:
         assert stdout_callback is not None, "stdout_callback should not be None"
         assert terminated_callback is not None, "terminated_callback should not be None"
 
-        self.log = module_logger.getChild(self.__class__.__name__)
-        self.log.debug(f"__init__({argv},{term},...")
+        self._log = module_logger.getChild(self.__class__.__name__)
+        self._log.debug(f"__init__({argv},{term},...")
         self._command = argv
         self._term = term
         self._loop = loop
@@ -181,7 +178,7 @@ class CallbackSubprocess:
         Terminate child process if running
         :param kill_delay: if after kill_delay seconds the child process has not exited, escalate to SIGHUP and SIGKILL
         """
-        self.log.debug("terminate()")
+        self._log.debug("terminate()")
         if not self.running:
             return
 
@@ -191,7 +188,7 @@ class CallbackSubprocess:
             pass
 
         def kill():
-            self.log.debug("kill()")
+            self._log.debug("kill()")
             try:
                 os.kill(self._pid, signal.SIGHUP)
                 os.kill(self._pid, signal.SIGKILL)
@@ -201,9 +198,9 @@ class CallbackSubprocess:
         self._loop.call_later(kill_delay, kill)
 
         def wait():
-            self.log.debug("wait()")
+            self._log.debug("wait()")
             os.waitpid(self._pid, 0)
-            self.log.debug("wait() finish")
+            self._log.debug("wait() finish")
 
         threading.Thread(target=wait).start()
 
@@ -226,7 +223,7 @@ class CallbackSubprocess:
         Write bytes to the stdin of the child process.
         :param data: bytes to write
         """
-        self.log.debug(f"write({data})")
+        self._log.debug(f"write({data})")
         os.write(self._child_fd, data)
 
     def set_winsize(self, r: int, c: int, h: int, v: int):
@@ -238,7 +235,7 @@ class CallbackSubprocess:
         :param v: vertical pixels visible
         :return:
         """
-        self.log.debug(f"set_winsize({r},{c},{h},{v}")
+        self._log.debug(f"set_winsize({r},{c},{h},{v}")
         tty_set_winsize(self._child_fd, r, c, h, v)
 
     def copy_winsize(self, fromfd:int):
@@ -268,7 +265,7 @@ class CallbackSubprocess:
         """
         Start the child process.
         """
-        self.log.debug("start()")
+        self._log.debug("start()")
         parentenv = os.environ.copy()
         env = {"HOME": parentenv["HOME"],
                "TERM": self._term if self._term is not None else parentenv.get("TERM", "xterm"),
@@ -290,11 +287,11 @@ class CallbackSubprocess:
             try:
                 pid, self._return_code = os.waitpid(self._pid, os.WNOHANG)
                 if self._return_code is not None and not process_exists(self._pid):
-                    self.log.debug(f"polled return code {self._return_code}")
+                    self._log.debug(f"polled return code {self._return_code}")
                     self._terminated_cb(self._return_code)
                 self._loop.call_later(CallbackSubprocess.PROCESS_POLL_TIME, poll)
             except Exception as e:
-                self.log.debug(f"Error in process poll: {e}")
+                self._log.debug(f"Error in process poll: {e}")
         self._loop.call_later(CallbackSubprocess.PROCESS_POLL_TIME, poll)
 
         def reader(fd: int, callback: callable):
