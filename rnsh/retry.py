@@ -16,12 +16,12 @@ class RetryStatus:
         self.wait_delay = wait_delay
         self.retry_callback = retry_callback
         self.timeout_callback = timeout_callback
-        self.try_time = time.monotonic()
+        self.try_time = time.time()
         self.completed = False
 
     @property
     def ready(self):
-        return self.try_time + self.wait_delay < time.monotonic() and not self.completed
+        return self.try_time + self.wait_delay < time.time() and not self.completed
 
     @property
     def timed_out(self):
@@ -59,10 +59,8 @@ class RetryThread:
             return self._finished
 
     def _thread_run(self):
-        last_run = time.monotonic()
         while self._run and self._finished is None:
-            time.sleep(last_run + self._loop_period - time.monotonic())
-            last_run = time.monotonic()
+            time.sleep(self._loop_period)
             ready: list[RetryStatus] = []
             prune: list[RetryStatus] = []
             with self._lock:

@@ -66,20 +66,20 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[RnsHandler()])
 
-#hack for temporarily overriding term settings to make debug print right
-_rns_log_orig = RNS.log
-
-def _rns_log(msg, level=3, _override_destination = False):
-    tattr = termios.tcgetattr(sys.stdin.fileno())
-    tattr_orig = tattr.copy()
-    # tcflag_t c_iflag;      /* input modes */
-    # tcflag_t c_oflag;      /* output modes */
-    # tcflag_t c_cflag;      /* control modes */
-    # tcflag_t c_lflag;      /* local modes */
-    # cc_t     c_cc[NCCS];   /* special characters */
-    tattr[1] = tattr[1] | termios.ONLRET | termios.ONLCR | termios.OPOST
-    termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, tattr)
-    _rns_log_orig(msg, level, _override_destination)
-    termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, tattr_orig)
-
-RNS.log = _rns_log
+# #hack for temporarily overriding term settings to make debug print right
+# _rns_log_orig = RNS.log
+#
+# def _rns_log(msg, level=3, _override_destination = False):
+#     tattr = termios.tcgetattr(sys.stdin.fileno())
+#     tattr_orig = tattr.copy()
+#     # tcflag_t c_iflag;      /* input modes */
+#     # tcflag_t c_oflag;      /* output modes */
+#     # tcflag_t c_cflag;      /* control modes */
+#     # tcflag_t c_lflag;      /* local modes */
+#     # cc_t     c_cc[NCCS];   /* special characters */
+#     tattr[1] = tattr[1] | termios.ONLRET | termios.ONLCR | termios.OPOST
+#     termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, tattr)
+#     _rns_log_orig(msg, level, _override_destination)
+#     termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, tattr_orig)
+#
+# RNS.log = _rns_log
