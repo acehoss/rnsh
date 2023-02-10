@@ -11,6 +11,7 @@ import os
 import asyncio
 import sys
 import fcntl
+import psutil
 import select
 import termios
 import logging as __logging
@@ -178,7 +179,7 @@ class CallbackSubprocess:
         assert terminated_callback is not None, "terminated_callback should not be None"
 
         self._log = module_logger.getChild(self.__class__.__name__)
-        self._log.debug(f"__init__({argv},{term},...")
+        # self._log.debug(f"__init__({argv},{term},...")
         self._command = argv
         self._term = term
         self._loop = loop
@@ -203,12 +204,13 @@ class CallbackSubprocess:
             pass
 
         def kill():
-            self._log.debug("kill()")
-            try:
-                os.kill(self._pid, signal.SIGHUP)
-                os.kill(self._pid, signal.SIGKILL)
-            except:
-                pass
+            if process_exists(self._pid):
+                self._log.debug("kill()")
+                try:
+                    os.kill(self._pid, signal.SIGHUP)
+                    os.kill(self._pid, signal.SIGKILL)
+                except:
+                    pass
 
         self._loop.call_later(kill_delay, kill)
 
@@ -281,21 +283,35 @@ class CallbackSubprocess:
         Start the child process.
         """
         self._log.debug("start()")
-        parentenv = os.environ.copy()
-        env = {"HOME": parentenv["HOME"],
-               "TERM": self._term if self._term is not None else parentenv.get("TERM", "xterm"),
-               "LANG": parentenv.get("LANG"),
-               "SHELL": self._command[0]}
+        # parentenv = os.environ.copy()
+        # env = {"HOME": parentenv["HOME"],
+        #        "TERM": self._term if self._term is not None else parentenv.get("TERM", "xterm"),
+        #        "LANG": parentenv.get("LANG"),
+        #         "SHELL": self._command[0]}
+
+        env = os.environ.copy()
+        if self._term is not None:
+            env["TERM"] = self._term
 
         self._pid, self._child_fd = pty.fork()
 
         if self._pid == 0:
             try:
+                p = psutil.Process()
+                for c in p.connections(kind='all'):
+                    if c == sys.stdin.fileno() or c == sys.stdout.fileno() or c == sys.stderr.fileno():
+                        continue
+                    try:
+                        os.close(c.fd)
+                    except:
+                        pass
                 os.setpgrp()
                 os.execvpe(self._command[0], self._command, env)
             except Exception as err:
-                print(f"Child process error {err}")
-            sys.exit(0)
+                print(f"Child process error: {err}")
+                sys.stdout.flush()
+            # don't let any other modules get in our way.
+            os._exit(0)
 
         def poll():
             # self.log.debug("poll")
@@ -306,7 +322,8 @@ class CallbackSubprocess:
                     self._terminated_cb(self._return_code)
                 self._loop.call_later(CallbackSubprocess.PROCESS_POLL_TIME, poll)
             except Exception as e:
-                self._log.debug(f"Error in process poll: {e}")
+                if not hasattr(e, "errno") or e.errno != errno.ECHILD:
+                    self._log.debug(f"Error in process poll: {e}")
         self._loop.call_later(CallbackSubprocess.PROCESS_POLL_TIME, poll)
 
         def reader(fd: int, callback: callable):

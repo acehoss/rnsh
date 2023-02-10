@@ -10,6 +10,7 @@ module_logger = __logging.getLogger(__name__)
 class RetryStatus:
     def __init__(self, tag: any, try_limit: int, wait_delay: float, retry_callback: Callable[[any, int], any],
                  timeout_callback: Callable[[any, int], None], tries: int = 1):
+        self._log = module_logger.getChild(self.__class__.__name__)
         self.tag = tag
         self.try_limit = try_limit
         self.tries = tries
@@ -21,7 +22,9 @@ class RetryStatus:
 
     @property
     def ready(self):
-        return self.try_time + self.wait_delay < time.time() and not self.completed
+        ready = time.time() > self.try_time + self.wait_delay
+        # self._log.debug(f"ready check {self.tag} try_time {self.try_time} wait_delay {self.wait_delay} next_try {self.try_time + self.wait_delay} now {time.time()} exceeded {time.time() - self.try_time - self.wait_delay} ready {ready}")
+        return ready
 
     @property
     def timed_out(self):
@@ -33,11 +36,12 @@ class RetryStatus:
 
     def retry(self):
         self.tries += 1
+        self.try_time = time.time()
         self.retry_callback(self.tag, self.tries)
 
 
 class RetryThread:
-    def __init__(self, loop_period: float = 0.25):
+    def __init__(self, loop_period: float = 0.25, name: str = "retry thread"):
         self._log = module_logger.getChild(self.__class__.__name__)
         self._loop_period = loop_period
         self._statuses: list[RetryStatus] = []
@@ -45,7 +49,7 @@ class RetryThread:
         self._lock = threading.RLock()
         self._run = True
         self._finished: asyncio.Future | None = None
-        self._thread = threading.Thread(target=self._thread_run)
+        self._thread = threading.Thread(name=name, target=self._thread_run)
         self._thread.start()
 
     def close(self, loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Future | None:
@@ -64,7 +68,7 @@ class RetryThread:
             ready: list[RetryStatus] = []
             prune: list[RetryStatus] = []
             with self._lock:
-                ready.extend(filter(lambda s: s.ready, self._statuses))
+                ready.extend(list(filter(lambda s: s.ready, self._statuses)))
             for retry in ready:
                 try:
                     if not retry.completed:
@@ -72,7 +76,7 @@ class RetryThread:
                             self._log.debug(f"timed out {retry.tag} after {retry.try_limit} tries")
                             retry.timeout()
                             prune.append(retry)
-                        else:
+                        elif retry.ready:
                             self._log.debug(f"retrying {retry.tag}, try {retry.tries + 1}/{retry.try_limit}")
                             retry.retry()
                 except Exception as e:
@@ -82,7 +86,10 @@ class RetryThread:
             with self._lock:
                 for retry in prune:
                     self._log.debug(f"pruned retry {retry.tag}, retry count {retry.tries}/{retry.try_limit}")
-                    self._statuses.remove(retry)
+                    try:
+                        self._statuses.remove(retry)
+                    except:
+                        pass
         if self._finished is not None:
             self._finished.set_result(None)
 
@@ -90,14 +97,19 @@ class RetryThread:
         self._tag_counter += 1
         return self._tag_counter
 
+    def has_tag(self, tag: any) -> bool:
+        with self._lock:
+            return next(filter(lambda s: s.tag == tag, self._statuses), None) is not None
+
     def begin(self, try_limit: int, wait_delay: float, try_callback: Callable[[any, int], any],
               timeout_callback: Callable[[any, int], None], tag: int | None = None) -> any:
         self._log.debug(f"running first try")
         tag = try_callback(tag, 1)
-        self._log.debug(f"first try success, got id {tag}")
+        self._log.debug(f"first try got id {tag}")
         with self._lock:
             if tag is None:
                 tag = self._get_next_tag()
+            self.complete(tag)
             self._statuses.append(RetryStatus(tag=tag,
                                               tries=1,
                                               try_limit=try_limit,
@@ -108,16 +120,15 @@ class RetryThread:
 
     def complete(self, tag: any):
         assert tag is not None
-        status: RetryStatus | None = None
         with self._lock:
-            status = next(filter(lambda l: l.tag == tag, self._statuses))
+            status = next(filter(lambda l: l.tag == tag, self._statuses), None)
             if status is not None:
                 status.completed = True
                 self._statuses.remove(status)
-        if status is not None:
-            self._log.debug(f"completed {tag}")
-        else:
-            self._log.debug(f"status not found to complete {tag}")
+                self._log.debug(f"completed {tag}")
+                return
+
+        self._log.debug(f"status not found to complete {tag}")
 
     def complete_all(self):
         with self._lock:
