@@ -1,19 +1,21 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[project]
+[tool.poetry]
 name = "rnsh"
 version = "0.0.1"
-authors = [{name="acehoss", email="acehoss@acehoss.net" }]
 description = "Shell over Reticulum"
+authors = ["acehoss <acehoss@acehoss.net>"]
+license = "MIT"
 readme = "README.md"
-dependencies = ["psutil","docopt","RNS"]
-requires-python = ">=3.11"
 
-[project.scripts]
-rnsh = "rnsh.rnsh:rnsh_cli"
+[tool.poetry.dependencies]
+python = "^3.11"
+rns = {git = "https://github.com/markqvist/Reticulum.git", rev = "3706769"}
+docopt = "^0.6.2"
+psutil = "^5.9.4"
 
-[project.urls]
-"Homepage" = "https://github.com/acehoss/rnsh"
-#"Bug Tracker" = "https://github.com/your_name_here/something/issues"
+[tool.poetry.scripts]
+rnsh = 'rnsh.rnsh:rnsh_cli'
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
