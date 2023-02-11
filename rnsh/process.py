@@ -110,6 +110,8 @@ def tty_set_winsize(fd: int, rows: int, cols: int, h_pixels: int, v_pixels: int)
     :param h_pixels: number of visible horizontal pixels
     :param v_pixels: number of visible vertical pixels
     """
+    if fd < 0:
+        return
     packed = struct.pack('HHHH', rows, cols, h_pixels, v_pixels)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, packed)
 
@@ -182,7 +184,7 @@ class CallbackSubprocess:
         self._log = module_logger.getChild(self.__class__.__name__)
         # self._log.debug(f"__init__({argv},{term},...")
         self._command: [str] = argv
-        self._env = env
+        self._env = env or {}
         self._loop = loop
         self._stdout_cb = stdout_callback
         self._terminated_cb = terminated_callback
@@ -383,7 +385,11 @@ async def main():
         # log.debug(f"terminated {rc}")
         retcode.set_result(rc)
 
-    process = CallbackSubprocess(sys.argv[1:], os.environ.get("TERM", "xterm"), loop, stdout, terminated)
+    process = CallbackSubprocess(argv=sys.argv[1:],
+                                 env={"TERM": os.environ.get("TERM", "xterm")},
+                                 loop=loop,
+                                 stdout_callback=stdout,
+                                 terminated_callback=terminated)
 
     def sigint_handler(signal, frame):
         # log.debug("KeyboardInterrupt")
