@@ -791,10 +791,11 @@ async def main():
     usage = '''
 Usage:
     rnsh [--config <configdir>] [-i <identityfile>] [-s <service_name>] [-l] -p
-    rnsh -l [--config <configfile>] [-i <identityfile>] [-s <service_name>] [-v...] [-q...] [-b] 
-         (-n | -a <identity_hash> [-a <identity_hash>]...) [--] <program> [<arg>...]
-    rnsh [--config <configfile>] [-i <identityfile>] [-s <service_name>] [-v...] [-q...] [-N] [-m]
-         [-w <timeout>] <destination_hash>
+    rnsh -l [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
+         [-v...] [-q...] [-b] (-n | -a <identity_hash> [-a <identity_hash>]...) 
+         [--] <program> [<arg>...]
+    rnsh [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
+         [-v...] [-q...] [-N] [-m] [-w <timeout>] <destination_hash>
     rnsh -h
     rnsh --version
 

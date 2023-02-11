@@ -1,7 +1,7 @@
-# `r n s h` Shell over Reticulum
+# `r n s h`  Shell over Reticulum
 
-`rnsh` is a utility written in Python that facilitates opening 
-shell sessions over Reticulum networks. It is based off the `rnx` 
+`rnsh` is a utility written in Python that facilitates shell 
+sessions over Reticulum networks. It is based off the `rnx` 
 utility that ships with Reticulum.
 
 `rnsh` is still pretty raw; there are some things that are 
@@ -12,26 +12,22 @@ out.
 
 ## Quickstart
 
-`rnsh` isn't quite ready to be available on pip, but it will be.
-For the folks who are brave enough to try it now, you'll need
-Python 3.11. Clone this repo, start a venv, and install a few 
-packages (I'll keep adding them as I remember more things I
-installed)
+Requires Python 3.11+ on Linux or Unix. WSL probably works. Cygwin might work, too.
 
-- psutil
-- docopt
-- RNS (from source, at least one pre-release feature is used)
-
-Then you can run it in using 
-`python <path_to_rnsh>/rnsh.py <options>`
+- Activate a virtualenv
+- `pip3 install rnsh`
+  - Or from a `whl` release, `pip3 install /path/to/rnsh-0.0.1-py3-none-any.whl`
+- Configure Reticulum interfaces, check with `rnstatus`
+- Ready to run `rnsh`. The options are shown below.
 
 ```
 Usage:
     rnsh [--config <configdir>] [-i <identityfile>] [-s <service_name>] [-l] -p
-    rnsh -l [--config <configfile>] [-i <identityfile>] [-s <service_name>] [-v...] [-q...] [-b] 
-         (-n | -a <identity_hash> [-a <identity_hash>]...) [--] <program> [<arg>...]
-    rnsh [--config <configfile>] [-i <identityfile>] [-s <service_name>] [-v...] [-q...] [-N] [-m]
-         [-w <timeout>] <destination_hash>
+    rnsh -l [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
+         [-v...] [-q...] [-b] (-n | -a <identity_hash> [-a <identity_hash>]...) 
+         [--] <program> [<arg>...]
+    rnsh [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
+         [-v...] [-q...] [-N] [-m] [-w <timeout>] <destination_hash>
     rnsh -h
     rnsh --version
 
@@ -51,44 +47,45 @@ Options:
     -q --quiet               Increase quietness
     --version                Show version
     -h --help                Show this help
-
 ```
 
 ## How it works
+### Listeners
+Listener instances are the servers. Each listener is configured 
+with an RNS identity, and a service name. Together, RNS makes
+these into a destination hash that can be used to connect to
+your listener.
+   
+Multiple listeners can use the same identity. As long as 
+they are given different service names. They will have 
+different destination hashes and not conflict.
 
-1. Set up one or more listeners. Each listener is configured 
-   with an RNS identity, and a service name. Together, RNS makes
-   these into a destination hash that can be used to connect to
-   your listener.
+Listeners must be configured with a command line to run (at 
+least at this time). The identity hash string is set in the
+environment variable RNS_REMOTE_IDENTITY for use in child
+programs.
+
+Listeners are set up using the `-l` flag.
    
-   Multiple listeners can use the same identity. As long as 
-   they are given different service names. They will have 
-   different destination hashes and not conflict.
-   
-   Listeners must be configured with a command line to run (at 
-   least at this time). The identity hash string is set in the
-   environment variable RNS_REMOTE_IDENTITY for use in child
-   programs.
-   
-   Listeners are set up using the `-l` flag.
-   
- 2. Set up your initiator (client) and get the identity hash. 
-    You'll need this value to configure the listener to allow 
-    your connection. It is possible to run the server without
-    authentication, but hopefully it's obvious that this is an
-    advanced use case. 
+### Initiators
+Initiators are the clients. Each initiator has an identity
+hash which is used as an authentication mechanism on Reticulum.
+You'll need this value to configure the listener to allow 
+your connection. It is possible to run the server without 
+authentication, but hopefully it's obvious that this is an
+advanced use case. 
     
-    To get the identity hash, use the `-p` flag.
+To get the identity hash, use the `-p` flag.
     
-    With the initiator identity set up in the listener command
-    line, and with the listener identity copied (you'll need to
-    do `-p` on the listener side, too), you can run the
-    initiator.
+With the initiator identity set up in the listener command
+line, and with the listener identity copied (you'll need to
+do `-p` on the listener side, too), you can run the
+initiator.
     
-    I recommend staying pretty vanilla to start with and
-    trying `/bin/zsh` or whatever your favorite shell is these 
-    days. The shell should start in login mode. Ideally it
-    works just like an `ssh` shell session.
+I recommend staying pretty vanilla to start with and
+trying `/bin/zsh` or whatever your favorite shell is these 
+days. The shell should start in login mode. Ideally it
+works just like an `ssh` shell session.
    
 ## Roadmap
 1. Plan a better roadmap
