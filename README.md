@@ -8,7 +8,15 @@ utility that ships with Reticulum.
 implemented badly, and many other things that haven't been 
 built at all (yet). Signals (i.e. Ctrl-C) need some work, so have
 another terminal handy to send a SIGTERM if things glitch
-out.
+out. 
+
+One of the main drivers of complexity in the implementation
+is that the only reliable way I found to read live from
+stdin/stdout (as opposed to line by line) _without blocking_
+required using quite a bit of `async ` code, while the
+RNS API is firmly synchronous. 
+
+Anyway, there's a lot of room for improvement.
 
 ## Quickstart
 
