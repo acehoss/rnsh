@@ -167,7 +167,7 @@ async def _listen(configdir, command, identitypath=None, service_name="default",
     try:
         while True:
             if not disable_announce and time.time() - last > 900:  # TODO: make parameter
-                last = datetime.datetime.now()
+                last = time.time()
                 _destination.announce()
             await _check_finished(1.0)
     except KeyboardInterrupt:
@@ -219,13 +219,15 @@ class ProcessState:
                  data_available_callback: callable,
                  terminated_callback: callable,
                  term: str | None,
+                 remote_identity: str | None,
                  loop: asyncio.AbstractEventLoop = None):
 
         self._log = _get_logger(self.__class__.__name__)
         self._mdu = mdu
         self._loop = loop if loop is not None else asyncio.get_running_loop()
         self._process = process.CallbackSubprocess(argv=cmd,
-                                                   term=term,
+                                                   env={ "TERM": term or os.environ.get("TERM", None),
+                                                         "RNS_REMOTE_IDENTITY": remote_identity or ""},
                                                    loop=loop,
                                                    stdout_callback=self._stdout_data,
                                                    terminated_callback=terminated_callback)
@@ -297,10 +299,10 @@ class ProcessState:
 
     def _update_winsz(self):
         try:
-            self.process.set_winsize(self._term_state[ProcessState.TERMSTATE_IDX_ROWS],
-                                     self._term_state[ProcessState.TERMSTATE_IDX_COLS],
-                                     self._term_state[ProcessState.TERMSTATE_IDX_HPIX],
-                                     self._term_state[ProcessState.TERMSTATE_IDX_VPIX])
+            self.process.set_winsize(self._term_state[1],
+                                     self._term_state[2],
+                                     self._term_state[3],
+                                     self._term_state[4])
         except Exception as e:
             self._log.debug(f"failed to update winsz: {e}")
 
@@ -354,7 +356,7 @@ class ProcessState:
             if stdin is not None and len(stdin) > 0:
                 stdin = base64.b64decode(stdin)
                 self.process.write(stdin)
-        response[ProcessState.RESPONSE_IDX_RETCODE] = self.return_code
+        response[ProcessState.RESPONSE_IDX_RETCODE] = None if self.process.running else self.return_code
 
         with self.lock:
             stdout = self.read(read_size)
@@ -457,13 +459,14 @@ def _subproc_terminated(link: RNS.Link, return_code: int):
     _loop.call_soon_threadsafe(cleanup)
 
 
-def _listen_start_proc(link: RNS.Link, term: str, loop: asyncio.AbstractEventLoop) -> ProcessState | None:
+def _listen_start_proc(link: RNS.Link, remote_identity: str | None, term: str, loop: asyncio.AbstractEventLoop) -> ProcessState | None:
     global _cmd
     log = _get_logger("_listen_start_proc")
     try:
         return ProcessState(tag=link.link_id,
                             cmd=_cmd,
                             term=term,
+                            remote_identity=remote_identity,
                             mdu=link.MDU,
                             loop=loop,
                             data_available_callback=functools.partial(_subproc_data_ready, link),
@@ -521,7 +524,10 @@ def _listen_request(path, data, request_id, link_id, remote_identity, requested_
         process_state = ProcessState.get_for_tag(link.link_id)
         if process_state is None:
             log.debug(f"Process not found for link {link}")
-            process_state = _listen_start_proc(link, term, _loop)
+            process_state = _listen_start_proc(link=link,
+                                               term=term,
+                                               remote_identity=RNS.hexrep(remote_identity.hash).replace(":", ""),
+                                               loop=_loop)
 
         # leave significant headroom for metadata and encoding
         result = process_state.process_request(data, link.MDU * 3 // 2)
@@ -708,6 +714,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
     def sigint_handler():
         log.debug("KeyboardInterrupt")
         data_buffer.extend("\x03".encode("utf-8"))
+        _new_data.set()
 
     def sigwinch_handler():
         # log.debug("WindowChanged")
@@ -718,19 +725,21 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
         data = process.tty_read(sys.stdin.fileno())
         # log.debug(f"stdin {data}")
         if data is not None:
-                data_buffer.extend(data)
+            data_buffer.extend(data)
+            _new_data.set()
 
     process.tty_add_reader_callback(sys.stdin.fileno(), stdin)
 
     await _check_finished()
-    # signal.signal(signal.SIGWINCH, sigwinch_handler)
     loop.add_signal_handler(signal.SIGWINCH, sigwinch_handler)
+    # leave a lot of overhead
+    mdu = 64
     first_loop = True
     while True:
         try:
             log.debug("top of client loop")
-            stdin = data_buffer.copy()
-            data_buffer.clear()
+            stdin = data_buffer[:mdu]
+            data_buffer = data_buffer[mdu:]
             _new_data.clear()
             log.debug("before _execute")
             return_code = await _execute(
@@ -744,9 +753,10 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
                 stdin=stdin,
                 timeout=timeout,
             )
-            # signal.signal(signal.SIGINT, sigint_handler)
+
             if first_loop:
                 first_loop = False
+                mdu = _link.MDU * 3 // 2
                 loop.remove_signal_handler(signal.SIGINT)
                 loop.add_signal_handler(signal.SIGINT, sigint_handler)
                 _new_data.set()
@@ -794,7 +804,7 @@ Usage:
     rnsh --version
 
 Options:
-    --config FILE            Alternate Reticulum config directory to use
+    --config DIR             Alternate Reticulum config directory to use
     -i FILE --identity FILE  Specific identity file to use
     -s NAME --service NAME   Listen on/connect to specific service name if not default
     -p --print-identity      Print identity information and exit

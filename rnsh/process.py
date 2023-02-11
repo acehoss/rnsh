@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import errno
 import functools
+import re
 import signal
 import struct
 import threading
@@ -164,7 +165,7 @@ class CallbackSubprocess:
     # time between checks of child process
     PROCESS_POLL_TIME: float = 0.1
 
-    def __init__(self, argv: [str], term: str | None, loop: asyncio.AbstractEventLoop, stdout_callback: callable,
+    def __init__(self, argv: [str], env: dict | None, loop: asyncio.AbstractEventLoop, stdout_callback: callable,
                  terminated_callback: callable):
         """
         Fork a child process and generate callbacks with output from the process.
@@ -180,8 +181,8 @@ class CallbackSubprocess:
 
         self._log = module_logger.getChild(self.__class__.__name__)
         # self._log.debug(f"__init__({argv},{term},...")
-        self._command = argv
-        self._term = term
+        self._command: [str] = argv
+        self._env = env
         self._loop = loop
         self._stdout_cb = stdout_callback
         self._terminated_cb = terminated_callback
@@ -283,20 +284,35 @@ class CallbackSubprocess:
         Start the child process.
         """
         self._log.debug("start()")
+
+        # # Using the parent environment seems to do some weird stuff, at least on macOS
         # parentenv = os.environ.copy()
         # env = {"HOME": parentenv["HOME"],
+        #        "PATH": parentenv["PATH"],
         #        "TERM": self._term if self._term is not None else parentenv.get("TERM", "xterm"),
         #        "LANG": parentenv.get("LANG"),
-        #         "SHELL": self._command[0]}
+        #        "SHELL": self._command[0]}
 
         env = os.environ.copy()
-        if self._term is not None:
-            env["TERM"] = self._term
+        for key in self._env:
+            env[key] = self._env[key]
+
+        program = self._command[0]
+        match = re.search("^/bin/(.*sh)$", program)
+        if match:
+            self._command[0] = "-" + match.group(1)
+            env["SHELL"] = program
+            self._log.debug(f"set login shell {self._command}")
+
 
         self._pid, self._child_fd = pty.fork()
 
         if self._pid == 0:
             try:
+                # this may not be strictly necessary, but there was
+                # is occasionally some funny business that goes on
+                # with networking. Anecdotally this fixed it, but
+                # more testing is needed as it might be a coincidence.
                 p = psutil.Process()
                 for c in p.connections(kind='all'):
                     if c == sys.stdin.fileno() or c == sys.stdout.fileno() or c == sys.stderr.fileno():
@@ -306,9 +322,9 @@ class CallbackSubprocess:
                     except:
                         pass
                 os.setpgrp()
-                os.execvpe(self._command[0], self._command, env)
+                os.execvpe(program, self._command, env)
             except Exception as err:
-                print(f"Child process error: {err}")
+                print(f"Child process error: {err}, command: {self._command}")
                 sys.stdout.flush()
             # don't let any other modules get in our way.
             os._exit(0)

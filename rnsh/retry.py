@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import threading
 import time
 import logging as __logging
@@ -11,6 +12,7 @@ class RetryStatus:
     def __init__(self, tag: any, try_limit: int, wait_delay: float, retry_callback: Callable[[any, int], any],
                  timeout_callback: Callable[[any, int], None], tries: int = 1):
         self._log = module_logger.getChild(self.__class__.__name__)
+        self._log.setLevel(logging.INFO)
         self.tag = tag
         self.try_limit = try_limit
         self.tries = tries
