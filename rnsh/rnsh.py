@@ -26,21 +26,18 @@ from __future__ import annotations
 import functools
 from typing import Callable, TypeVar
 import termios
-import rnslogging
+import rnsh.rnslogging as rnslogging
 import RNS
-import shlex
 import time
 import sys
 import os
-import datetime
 import base64
-import process
+import rnsh.process as process
 import asyncio
 import threading
 import signal
-import retry
-from multiprocessing.pool import ThreadPool
-from __version import __version__
+import rnsh.retry as retry
+from rnsh.__version import __version__
 import logging as __logging
 
 module_logger = __logging.getLogger(__name__)
@@ -61,7 +58,6 @@ DATA_AVAIL_MSG = "data available"
 _finished: asyncio.Event | None = None
 _retry_timer = retry.RetryThread()
 _destination: RNS.Destination | None = None
-_pool: ThreadPool = ThreadPool(10)
 _loop: asyncio.AbstractEventLoop | None = None
 
 async def _check_finished(timeout: float = 0):
@@ -545,7 +541,6 @@ def _listen_request(path, data, request_id, link_id, remote_identity, requested_
 
 
 async def _spin(until: Callable | None = None, timeout: float | None = None) -> bool:
-    global _pool
     if timeout is not None:
         timeout += time.time()
 
@@ -892,7 +887,7 @@ Options:
         print("")
 
 
-if __name__ == "__main__":
+def rnsh_cli():
     return_code = 1
     try:
         return_code = asyncio.run(main())
@@ -902,6 +897,9 @@ if __name__ == "__main__":
         except:
             pass
         _tr.restore()
-        _pool.close()
         _retry_timer.close()
     sys.exit(return_code)
+
+
+if __name__ == "__main__":
+    rnsh_cli()

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rnsh"
+version = "0.0.1"
+authors = [{name="acehoss", email="acehoss@acehoss.net" }]
+description = "Shell over Reticulum"
+readme = "README.md"
+dependencies = ["psutil","docopt","RNS"]
+requires-python = ">=3.11"
+
+[project.scripts]
+rnsh = "rnsh.rnsh:rnsh_cli"
+
+[project.urls]
+"Homepage" = "https://github.com/acehoss/rnsh"
+#"Bug Tracker" = "https://github.com/your_name_here/something/issues"
