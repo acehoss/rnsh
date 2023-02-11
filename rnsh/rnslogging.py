@@ -122,9 +122,12 @@ def _rns_log(msg, level=3, _override_destination=False):
         if tattr_orig is not None:
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, tattr_orig)
 
-    if _loop:
-        _loop.call_soon_threadsafe(inner)
-    else:
+    try:
+        if _loop:
+            _loop.call_soon_threadsafe(inner)
+        else:
+            inner()
+    except RuntimeError:
         inner()
 
 
