@@ -16,6 +16,13 @@ psutil = "^5.9.4"
 rnsh = 'rnsh.rnsh:rnsh_cli'
 
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.2.1"
+flake8 = "^6.0.0"
+bandit = "^1.7.4"
+isort = "^5.12.0"
+safety = "^2.3.5"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

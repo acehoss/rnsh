@@ -12,7 +12,7 @@ out.
 
 ## Quickstart
 
-Requires Python 3.11+ on Linux or Unix. WSL probably works. Cygwin might work, too.
+Requires Python 3.10+ on Linux or Unix. WSL probably works. Cygwin might work, too.
 
 - Activate a virtualenv
 - `pip3 install rnsh`

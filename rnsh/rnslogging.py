@@ -20,17 +20,18 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import asyncio
 import logging
+import sys
+import termios
 from logging import Handler, getLevelName
 from types import GenericAlias
-import os
-import tty
-from typing import List, Any
-import asyncio
-import termios
-import sys
+from typing import Any
+
 import RNS
-import json
+
+import rnsh.exception as exception
+
 
 class RnsHandler(Handler):
     """
@@ -77,29 +78,35 @@ class RnsHandler(Handler):
 
     __class_getitem__ = classmethod(GenericAlias)
 
+
 log_format = '%(name)-30s %(message)s [%(threadName)s]'
 
 logging.basicConfig(
     level=logging.DEBUG,  # RNS.log will filter it, but some formatting will still be processed before it gets there
-    #format='%(asctime)s.%(msecs)03d %(levelname)-6s %(threadName)-15s %(name)-15s %(message)s',
+    # format='%(asctime)s.%(msecs)03d %(levelname)-6s %(threadName)-15s %(name)-15s %(message)s',
     format=log_format,
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[RnsHandler()])
 
-_loop: asyncio.AbstractEventLoop | None = None
+_loop: asyncio.AbstractEventLoop = None
+
+
 def set_main_loop(loop: asyncio.AbstractEventLoop):
     global _loop
     _loop = loop
 
-#hack for temporarily overriding term settings to make debug print right
+
+# hack for temporarily overriding term settings to make debug print right
 _rns_log_orig = RNS.log
 
-def _rns_log(msg, level=3, _override_destination = False):
+
+def _rns_log(msg, level=3, _override_destination=False):
     if not RNS.compact_log_fmt:
         msg = (" " * (7 - len(RNS.loglevelname(level)))) + msg
+
     def inner():
-        tattr_orig: list[Any] | None = None
-        try:
+        tattr_orig: list[Any] = None
+        with exception.permit(SystemExit):
             tattr = termios.tcgetattr(sys.stdin.fileno())
             tattr_orig = tattr.copy()
             # tcflag_t c_iflag;      /* input modes */
@@ -109,19 +116,16 @@ def _rns_log(msg, level=3, _override_destination = False):
             # cc_t     c_cc[NCCS];   /* special characters */
             tattr[1] = tattr[1] | termios.ONLRET | termios.ONLCR | termios.OPOST
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, tattr)
-        except:
-            pass
 
         _rns_log_orig(msg, level, _override_destination)
 
         if tattr_orig is not None:
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, tattr_orig)
-    try:
-        if _loop:
-            _loop.call_soon_threadsafe(inner)
-        else:
-            inner()
-    except:
+
+    if _loop:
+        _loop.call_soon_threadsafe(inner)
+    else:
         inner()
+
 
 RNS.log = _rns_log

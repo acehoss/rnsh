@@ -23,24 +23,27 @@
 import asyncio
 import contextlib
 import errno
+import fcntl
 import functools
-import re
+import logging as __logging
+import os
+import pty
+import select
 import signal
 import struct
+import sys
+import termios
 import threading
 import tty
-import pty
-import os
-import asyncio
-import sys
-import fcntl
+
 import psutil
-import select
-import termios
-import logging as __logging
+
+import rnsh.exception as exception
+
 module_logger = __logging.getLogger(__name__)
 
-def tty_add_reader_callback(fd: int, callback: callable, loop: asyncio.AbstractEventLoop | None = None):
+
+def tty_add_reader_callback(fd: int, callback: callable, loop: asyncio.AbstractEventLoop = None):
     """
     Add an async reader callback for a tty file descriptor.
 
@@ -60,7 +63,8 @@ def tty_add_reader_callback(fd: int, callback: callable, loop: asyncio.AbstractE
         loop = asyncio.get_running_loop()
     loop.add_reader(fd, callback)
 
-def tty_read(fd: int) -> bytes | None:
+
+def tty_read(fd: int) -> bytes:
     """
     Read available bytes from a tty file descriptor. When used in a callback added to a file descriptor using
     tty_add_reader_callback(...), this function creates a solution for non-blocking reads from ttys.
@@ -78,7 +82,7 @@ def tty_read(fd: int) -> bytes | None:
             break
         for f in ready:
             try:
-                data = os.read(fd, 512)
+                data = os.read(f, 512)
             except OSError as e:
                 if e.errno != errno.EIO and e.errno != errno.EWOULDBLOCK:
                     raise
@@ -88,6 +92,7 @@ def tty_read(fd: int) -> bytes | None:
                 if data is not None and len(data) > 0:
                     result.extend(data)
     return result
+
 
 def fd_is_closed(fd: int) -> bool:
     """
@@ -100,20 +105,20 @@ def fd_is_closed(fd: int) -> bool:
     except OSError as ose:
         return ose.errno == errno.EBADF
 
-def tty_unset_reader_callbacks(fd: int, loop: asyncio.AbstractEventLoop | None = None):
+
+def tty_unset_reader_callbacks(fd: int, loop: asyncio.AbstractEventLoop = None):
     """
     Remove async reader callbacks for file descriptor.
     :param fd: file descriptor
     :param loop: asyncio event loop from which to remove callbacks
     """
-    try:
+    with exception.permit(SystemExit):
         if loop is None:
             loop = asyncio.get_running_loop()
         loop.remove_reader(fd)
-    except:
-        pass
 
-def tty_get_winsize(fd: int) -> [int, int, int , int]:
+
+def tty_get_winsize(fd: int) -> [int, int, int, int]:
     """
     Ge the window size of a tty.
     :param fd: file descriptor of tty
@@ -122,6 +127,7 @@ def tty_get_winsize(fd: int) -> [int, int, int , int]:
     packed = fcntl.ioctl(fd, termios.TIOCGWINSZ, struct.pack('HHHH', 0, 0, 0, 0))
     rows, cols, h_pixels, v_pixels = struct.unpack('HHHH', packed)
     return rows, cols, h_pixels, v_pixels
+
 
 def tty_set_winsize(fd: int, rows: int, cols: int, h_pixels: int, v_pixels: int):
     """
@@ -137,6 +143,7 @@ def tty_set_winsize(fd: int, rows: int, cols: int, h_pixels: int, v_pixels: int)
     packed = struct.pack('HHHH', rows, cols, h_pixels, v_pixels)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, packed)
 
+
 def process_exists(pid) -> bool:
     """
     Check For the existence of a unix pid.
@@ -149,6 +156,7 @@ def process_exists(pid) -> bool:
         return False
     else:
         return True
+
 
 class TtyRestorer:
     def __init__(self, fd: int):
@@ -189,12 +197,12 @@ class CallbackSubprocess:
     # time between checks of child process
     PROCESS_POLL_TIME: float = 0.1
 
-    def __init__(self, argv: [str], env: dict | None, loop: asyncio.AbstractEventLoop, stdout_callback: callable,
+    def __init__(self, argv: [str], env: dict, loop: asyncio.AbstractEventLoop, stdout_callback: callable,
                  terminated_callback: callable):
         """
         Fork a child process and generate callbacks with output from the process.
         :param argv: the command line, tokenized. The first element must be the absolute path to an executable file.
-        :param term: the value that should be set for TERM. If None, the value from the parent process will be used
+        :param env: environment variables to override
         :param loop: the asyncio event loop to use
         :param stdout_callback: callback for data, e.g. def callback(data:bytes) -> None
         :param terminated_callback: callback for termination/return code, e.g. def callback(return_code:int) -> None
@@ -210,9 +218,9 @@ class CallbackSubprocess:
         self._loop = loop
         self._stdout_cb = stdout_callback
         self._terminated_cb = terminated_callback
-        self._pid: int | None = None
-        self._child_fd: int | None = None
-        self._return_code: int | None = None
+        self._pid: int = None
+        self._child_fd: int = None
+        self._return_code: int = None
 
     def terminate(self, kill_delay: float = 1.0):
         """
@@ -223,19 +231,15 @@ class CallbackSubprocess:
         if not self.running:
             return
 
-        try:
+        with exception.permit(SystemExit):
             os.kill(self._pid, signal.SIGTERM)
-        except:
-            pass
 
         def kill():
             if process_exists(self._pid):
                 self._log.debug("kill()")
-                try:
+                with exception.permit(SystemExit):
                     os.kill(self._pid, signal.SIGHUP)
                     os.kill(self._pid, signal.SIGKILL)
-                except:
-                    pass
 
         self._loop.call_later(kill_delay, kill)
 
@@ -280,15 +284,15 @@ class CallbackSubprocess:
         self._log.debug(f"set_winsize({r},{c},{h},{v}")
         tty_set_winsize(self._child_fd, r, c, h, v)
 
-    def copy_winsize(self, fromfd:int):
+    def copy_winsize(self, fromfd: int):
         """
         Copy window size from one tty to another.
         :param fromfd: source tty file descriptor
         """
-        r,c,h,v = tty_get_winsize(fromfd)
-        self.set_winsize(r,c,h,v)
+        r, c, h, v = tty_get_winsize(fromfd)
+        self.set_winsize(r, c, h, v)
 
-    def tcsetattr(self, when: int, attr: list[int | list[int | bytes]]):
+    def tcsetattr(self, when: int, attr: list[any]):  # actual type is list[int | list[int | bytes]]
         """
         Set tty attributes.
         :param when: when to apply change: termios.TCSANOW or termios.TCSADRAIN or termios.TCSAFLUSH
@@ -296,7 +300,7 @@ class CallbackSubprocess:
         """
         termios.tcsetattr(self._child_fd, when, attr)
 
-    def tcgetattr(self) -> list[int | list[int | bytes]]:
+    def tcgetattr(self) -> list[any]:  # actual type is list[int | list[int | bytes]]
         """
         Get tty attributes.
         :return: tty attributes value
@@ -328,7 +332,6 @@ class CallbackSubprocess:
         #     env["SHELL"] = program
         #     self._log.debug(f"set login shell {self._command}")
 
-
         self._pid, self._child_fd = pty.fork()
 
         if self._pid == 0:
@@ -341,10 +344,8 @@ class CallbackSubprocess:
                 for c in p.connections(kind='all'):
                     if c == sys.stdin.fileno() or c == sys.stdout.fileno() or c == sys.stderr.fileno():
                         continue
-                    try:
+                    with exception.permit(SystemExit):
                         os.close(c.fd)
-                    except:
-                        pass
                 os.setpgrp()
                 os.execvpe(program, self._command, env)
             except Exception as err:
@@ -364,21 +365,19 @@ class CallbackSubprocess:
             except Exception as e:
                 if not hasattr(e, "errno") or e.errno != errno.ECHILD:
                     self._log.debug(f"Error in process poll: {e}")
+
         self._loop.call_later(CallbackSubprocess.PROCESS_POLL_TIME, poll)
 
         def reader(fd: int, callback: callable):
-            result = bytearray()
-            try:
-                c = tty_read(fd)
-                if c is not None and len(c) > 0:
-                    callback(c)
-            except:
-                pass
+            with exception.permit(SystemExit):
+                data = tty_read(fd)
+                if data is not None and len(data) > 0:
+                    callback(data)
 
         tty_add_reader_callback(self._child_fd, functools.partial(reader, self._child_fd, self._stdout_cb), self._loop)
 
     @property
-    def return_code(self) -> int | None:
+    def return_code(self) -> int:
         return self._return_code
 
 
@@ -387,7 +386,6 @@ async def main():
     A test driver for the CallbackProcess class.
     python ./process.py /bin/zsh --login
     """
-    import rnsh.testlogging
 
     log = module_logger.getChild("main")
     if len(sys.argv) <= 1:
@@ -413,14 +411,14 @@ async def main():
                                  stdout_callback=stdout,
                                  terminated_callback=terminated)
 
-    def sigint_handler(signal, frame):
+    def sigint_handler(sig, frame):
         # log.debug("KeyboardInterrupt")
         if process is None or process.started and not process.running:
             raise KeyboardInterrupt
         elif process.running:
             process.write("\x03".encode("utf-8"))
 
-    def sigwinch_handler(signal, frame):
+    def sigwinch_handler(sig, frame):
         # log.debug("WindowChanged")
         process.copy_winsize(sys.stdin.fileno())
 
@@ -442,6 +440,7 @@ async def main():
     val = await retcode
     log.debug(f"got retcode {val}")
     return val
+
 
 if __name__ == "__main__":
     tr = TtyRestorer(sys.stdin.fileno())

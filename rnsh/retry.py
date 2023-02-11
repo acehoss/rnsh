@@ -24,6 +24,7 @@ import asyncio
 import logging
 import threading
 import time
+import rnsh.exception as exception
 import logging as __logging
 from typing import Callable
 
@@ -47,7 +48,9 @@ class RetryStatus:
     @property
     def ready(self):
         ready = time.time() > self.try_time + self.wait_delay
-        # self._log.debug(f"ready check {self.tag} try_time {self.try_time} wait_delay {self.wait_delay} next_try {self.try_time + self.wait_delay} now {time.time()} exceeded {time.time() - self.try_time - self.wait_delay} ready {ready}")
+        self._log.debug(f"ready check {self.tag} try_time {self.try_time} wait_delay {self.wait_delay} " +
+                        f"next_try {self.try_time + self.wait_delay} now {time.time()} " +
+                        f"exceeded {time.time() - self.try_time - self.wait_delay} ready {ready}")
         return ready
 
     @property
@@ -72,11 +75,11 @@ class RetryThread:
         self._tag_counter = 0
         self._lock = threading.RLock()
         self._run = True
-        self._finished: asyncio.Future | None = None
+        self._finished: asyncio.Future = None
         self._thread = threading.Thread(name=name, target=self._thread_run)
         self._thread.start()
 
-    def close(self, loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Future | None:
+    def close(self, loop: asyncio.AbstractEventLoop = None) -> asyncio.Future:
         self._log.debug("stopping timer thread")
         if loop is None:
             self._run = False
@@ -110,10 +113,8 @@ class RetryThread:
             with self._lock:
                 for retry in prune:
                     self._log.debug(f"pruned retry {retry.tag}, retry count {retry.tries}/{retry.try_limit}")
-                    try:
+                    with exception.permit(SystemExit):
                         self._statuses.remove(retry)
-                    except:
-                        pass
         if self._finished is not None:
             self._finished.set_result(None)
 
@@ -126,7 +127,7 @@ class RetryThread:
             return next(filter(lambda s: s.tag == tag, self._statuses), None) is not None
 
     def begin(self, try_limit: int, wait_delay: float, try_callback: Callable[[any, int], any],
-              timeout_callback: Callable[[any, int], None], tag: int | None = None) -> any:
+              timeout_callback: Callable[[any, int], None], tag: int = None) -> any:
         self._log.debug(f"running first try")
         tag = try_callback(tag, 1)
         self._log.debug(f"first try got id {tag}")
