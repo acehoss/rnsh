@@ -3,7 +3,8 @@
 
 `rnsh` is a utility written in Python that facilitates shell 
 sessions over [Reticulum](https://reticulum.network) networks. 
-It is based on the `rnx` utility that ships with Reticulum.
+It is based on the `rnx` utility that ships with Reticulum and
+aims to have provide a similar experience to SSH.
 
 `rnsh` is still a little raw; there are some things that are 
 implemented badly, and many other things that haven't been 
