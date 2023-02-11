@@ -1,4 +1,5 @@
-# `r n s h`  Shell over Reticulum
+# `r n s h`  Shell over Reticulum 
+[![CI](https://github.com/acehoss/rnsh/actions/workflows/python-package.yml/badge.svg)](https://github.com/acehoss/rnsh/actions/workflows/python-package.yml)
 
 `rnsh` is a utility written in Python that facilitates shell 
 sessions over Reticulum networks. It is based off the `rnx` 
