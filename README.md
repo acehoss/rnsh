@@ -20,7 +20,9 @@ Anyway, there's a lot of room for improvement.
 
 ## Quickstart
 
-Requires Python 3.10+ on Linux or Unix. WSL probably works. Cygwin might work, too.
+Tested (thus far) on Python 3.11 macOS 13.1 ARM64. Should
+run on Python 3.6+ on Linux or Unix. WSL probably works. 
+Cygwin might work, too.
 
 - Activate a virtualenv
 - `pip3 install rnsh`
@@ -103,7 +105,7 @@ works just like an `ssh` shell session.
 ## TODO
 - [X] ~~Initial version~~
 - [X] ~~Pip package with command-line utility support~~
-- [ ] Publish to PyPI
+- [X] ~~Publish to PyPI~~
 - [ ] Improve signal handling
 - [ ] Protocol improvements (throughput!)
 - [ ] Test on several *nixes
