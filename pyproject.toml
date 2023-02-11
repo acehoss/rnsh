@@ -15,12 +15,16 @@ psutil = "^5.9.4"
 [tool.poetry.scripts]
 rnsh = 'rnsh.rnsh:rnsh_cli'
 
-
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.2.1"
 setuptools = "^67.2.0"
 black = "^23.1.0"
 pytest-asyncio = "^0.20.3"
+
+[tool.pytest.ini_options]
+markers = [
+    "skip_ci: marks tests that should not be run in CI builds (deselect with '-m \"not skip_ci\"')"
+]
 
 [build-system]
 requires = ["poetry-core"]
