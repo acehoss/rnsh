@@ -94,7 +94,7 @@ works just like an `ssh` shell session.
 
 ## TODO
 - [X] ~~Initial version~~
-- [ ] Pip package with command-line utility support
+- [X] ~~Pip package with command-line utility support~~
 - [ ] Publish to PyPI
 - [ ] Improve signal handling
 - [ ] Protocol improvements (throughput!)
