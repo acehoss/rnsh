@@ -530,7 +530,7 @@ def _listen_request(path, data, request_id, link_id, remote_identity, requested_
                                                loop=_loop)
 
         # leave significant headroom for metadata and encoding
-        result = process_state.process_request(data, link.MDU * 3 // 2)
+        result = process_state.process_request(data, link.MDU * 4 // 3)
         return result
         # return ProcessState.default_response()
     except Exception as e:
@@ -756,7 +756,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
 
             if first_loop:
                 first_loop = False
-                mdu = _link.MDU * 3 // 2
+                mdu = _link.MDU * 4 // 3
                 loop.remove_signal_handler(signal.SIGINT)
                 loop.add_signal_handler(signal.SIGINT, sigint_handler)
                 _new_data.set()
