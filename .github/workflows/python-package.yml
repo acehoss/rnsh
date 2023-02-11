@@ -5,7 +5,7 @@ on: [push]
 jobs:
 
   test:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, linux]
 
     steps:
       - uses: actions/checkout@v1
