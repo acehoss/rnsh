@@ -1,4 +1,4 @@
-# rnsh - Shell over Reticulum
+# `r n s h` Shell over Reticulum
 
 `rnsh` is a utility written in Python that facilitates opening 
 shell sessions over Reticulum networks. It is based off the `rnx` 
