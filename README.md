@@ -2,10 +2,10 @@
 [![CI](https://github.com/acehoss/rnsh/actions/workflows/python-package.yml/badge.svg)](https://github.com/acehoss/rnsh/actions/workflows/python-package.yml)
 
 `rnsh` is a utility written in Python that facilitates shell 
-sessions over Reticulum networks. It is based off the `rnx` 
-utility that ships with Reticulum.
+sessions over [Reticulum](https://reticulum.network) networks. 
+It is based on the `rnx` utility that ships with Reticulum.
 
-`rnsh` is still pretty raw; there are some things that are 
+`rnsh` is still a little raw; there are some things that are 
 implemented badly, and many other things that haven't been 
 built at all (yet). Signals (i.e. Ctrl-C) need some work, so have
 another terminal handy to send a SIGTERM if things glitch
@@ -31,6 +31,40 @@ Cygwin might work, too.
 - Configure Reticulum interfaces, check with `rnstatus`
 - Ready to run `rnsh`. The options are shown below.
 
+### Example: Shell server
+#### Setup
+Before running the listener or initiator, you'll need to get the 
+listener destination hash and the initiator identity hash.
+```shell
+# On listener
+rnsh -l -p
+
+# On initiator
+rnsh -p
+```
+Note: if you are using a non-default identity or service name, be
+sure to supply these options with `-p` as the identity and 
+destination hashes will change depending on these settings.
+
+#### Listener
+- Listening for default service name ("default").
+- Using user's default Reticulum config dir (~/.reticulum).
+- Using default identity ($RNSCONFIGDIR/storage/identities/rnsh).
+- Allowing remote identity `6d47805065fa470852cf1b1ef417a1ac` to connect.
+- Launching `/bin/zsh` on authorized connect.
+```shell
+rnsh -l -a 6d47805065fa470852cf1b1ef417a1ac -- /bin/zsh
+```
+#### Initiator
+- Connecting to default service name ("default").
+- Using user's default Reticulum config dir (~/.reticulum).
+- Using default identity ($RNSCONFIGDIR/storage/identities/rnsh).
+- Connecting to destination `a5f72aefc2cb3cdba648f73f77c4e887`
+```shell
+rnsh a5f72aefc2cb3cdba648f73f77c4e887
+```
+
+## Options
 ```
 Usage:
     rnsh [--config <configdir>] [-i <identityfile>] [-s <service_name>] [-l] -p
@@ -97,6 +131,22 @@ I recommend staying pretty vanilla to start with and
 trying `/bin/zsh` or whatever your favorite shell is these 
 days. The shell should start in login mode. Ideally it
 works just like an `ssh` shell session.
+
+### Protocol
+The protocol is build on top of the Reticulum `Request` and
+`Packet` APIs.
+
+- After the initiator identifies on the connection, it enters
+  a request loop. 
+- When idle, the initiator will periodically 
+  poll the listener. 
+- When the initiator has data available (i.e the user typed 
+  some characters), the initiator will send that data to the
+  listener in a request, and the listener will respond with 
+  any data available from the listener. 
+- When the listener has new data available, it notifies the 
+  initiator using a notification packet. The initiator then 
+  makes a request to the listener to fetch the data.
    
 ## Roadmap
 1. Plan a better roadmap
