@@ -298,11 +298,11 @@ class CallbackSubprocess:
             env[key] = self._env[key]
 
         program = self._command[0]
-        match = re.search("^/bin/(.*sh)$", program)
-        if match:
-            self._command[0] = "-" + match.group(1)
-            env["SHELL"] = program
-            self._log.debug(f"set login shell {self._command}")
+        # match = re.search("^/bin/(.*sh)$", program)
+        # if match:
+        #     self._command[0] = "-" + match.group(1)
+        #     env["SHELL"] = program
+        #     self._log.debug(f"set login shell {self._command}")
 
 
         self._pid, self._child_fd = pty.fork()
