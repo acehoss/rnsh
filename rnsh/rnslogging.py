@@ -24,6 +24,7 @@ import asyncio
 import logging
 import sys
 import termios
+import rnsh.process as process
 from logging import Handler, getLevelName
 from types import GenericAlias
 from typing import Any
@@ -104,31 +105,23 @@ def _rns_log(msg, level=3, _override_destination=False):
     if not RNS.compact_log_fmt:
         msg = (" " * (7 - len(RNS.loglevelname(level)))) + msg
 
-    def inner():
-        tattr_orig: list[Any] = None
-        with exception.permit(SystemExit):
-            tattr = termios.tcgetattr(sys.stdin.fileno())
-            tattr_orig = tattr.copy()
-            # tcflag_t c_iflag;      /* input modes */
-            # tcflag_t c_oflag;      /* output modes */
-            # tcflag_t c_cflag;      /* control modes */
-            # tcflag_t c_lflag;      /* local modes */
-            # cc_t     c_cc[NCCS];   /* special characters */
-            tattr[1] = tattr[1] | termios.ONLRET | termios.ONLCR | termios.OPOST
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, tattr)
-
-        _rns_log_orig(msg, level, _override_destination)
-
-        if tattr_orig is not None:
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, tattr_orig)
+    def _rns_log_inner():
+        nonlocal msg, level, _override_destination
+        with process.TTYRestorer(sys.stdin.fileno()) as tr:
+            with exception.permit(SystemExit):
+                attr = tr.current_attr()
+                attr[process.TTYRestorer.ATTR_IDX_OFLAG] = attr[process.TTYRestorer.ATTR_IDX_OFLAG] | \
+                                                           termios.ONLRET | termios.ONLCR | termios.OPOST
+                tr.set_attr(attr)
+                _rns_log_orig(msg, level, _override_destination)
 
     try:
         if _loop:
-            _loop.call_soon_threadsafe(inner)
+            _loop.call_soon_threadsafe(_rns_log_inner)
         else:
-            inner()
+            _rns_log_inner()
     except RuntimeError:
-        inner()
+        _rns_log_inner()
 
 
 RNS.log = _rns_log

@@ -1,7 +1,5 @@
 import uuid
 import time
-from types import TracebackType
-from typing import Type
 import pytest
 import rnsh.process
 import contextlib
@@ -9,6 +7,8 @@ import asyncio
 import logging
 import os
 import threading
+import types
+import typing
 logging.getLogger().setLevel(logging.DEBUG)
 
 
@@ -46,8 +46,8 @@ class State(contextlib.AbstractContextManager):
         if self.process and self.process.running:
             self.process.terminate(kill_delay=0.1)
 
-    def __exit__(self, __exc_type: Type[BaseException], __exc_value: BaseException,
-                 __traceback: TracebackType) -> bool:
+    def __exit__(self, __exc_type: typing.Type[BaseException], __exc_value: BaseException,
+                 __traceback: types.TracebackType) -> bool:
         self.cleanup()
         return False
 

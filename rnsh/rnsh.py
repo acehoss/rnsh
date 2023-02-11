@@ -558,7 +558,7 @@ async def _spin(until: callable = None, timeout: float | None = None) -> bool:
 _link: RNS.Link | None = None
 _remote_exec_grace = 2.0
 _new_data: asyncio.Event | None = None
-_tr = process.TtyRestorer(sys.stdin.fileno())
+_tr = process.TTYRestorer(sys.stdin.fileno())
 
 
 def _client_packet_handler(message, packet):

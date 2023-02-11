@@ -35,7 +35,8 @@ import sys
 import termios
 import threading
 import tty
-
+import types
+import typing
 import psutil
 
 import rnsh.exception as exception
@@ -160,10 +161,26 @@ def process_exists(pid) -> bool:
         return True
 
 
-class TtyRestorer:
+class TTYRestorer(contextlib.AbstractContextManager):
+    # Indexes of flags within the attrs array
+    ATTR_IDX_IFLAG = 0
+    ATTR_IDX_OFLAG = 1
+    ATTR_IDX_CFLAG = 2
+    ATTR_IDX_LFLAG = 4
+    ATTR_IDX_CC    = 5
+
     def __init__(self, fd: int):
         """
-        Saves termios attributes for a tty for later restoration
+        Saves termios attributes for a tty for later restoration.
+
+        The attributes are an array of values with the following meanings.
+
+            tcflag_t c_iflag;      /* input modes */
+            tcflag_t c_oflag;      /* output modes */
+            tcflag_t c_cflag;      /* control modes */
+            tcflag_t c_lflag;      /* local modes */
+            cc_t     c_cc[NCCS];   /* special characters */
+
         :param fd: file descriptor of tty
         """
         self._fd = fd
@@ -175,11 +192,30 @@ class TtyRestorer:
         """
         tty.setraw(self._fd, termios.TCSADRAIN)
 
+    def current_attr(self) -> [any]:
+        """
+        Get the current termios attributes for the wrapped fd.
+        :return: attribute array
+        """
+        return termios.tcgetattr(self._fd).copy()
+
+    def set_attr(self, attr: [any], when: int = termios.TCSANOW):
+        """
+        Set termios attributes
+        :param attr: attribute list to set
+        """
+        termios.tcsetattr(self._fd, when, attr)
+
     def restore(self):
         """
         Restore termios settings to state captured in constructor.
         """
         termios.tcsetattr(self._fd, termios.TCSADRAIN, self._tattr)
+
+    def __exit__(self, __exc_type: typing.Type[BaseException], __exc_value: BaseException,
+                 __traceback: types.TracebackType) -> bool:
+        self.restore()
+        return False
 
 
 async def event_wait(evt: asyncio.Event, timeout: float) -> bool:
@@ -444,7 +480,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    tr = TtyRestorer(sys.stdin.fileno())
+    tr = TTYRestorer(sys.stdin.fileno())
     try:
         tr.raw()
         asyncio.run(main())
