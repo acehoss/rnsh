@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.10"
 rns = {git = "https://github.com/markqvist/Reticulum.git", rev = "3706769"}
 docopt = "^0.6.2"
 psutil = "^5.9.4"
