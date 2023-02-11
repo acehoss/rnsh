@@ -62,7 +62,7 @@ class RetryStatus:
         self.timeout_callback(self.tag, self.tries)
 
     def retry(self):
-        self.tries += 1
+        self.tries = self.tries + 1
         self.try_time = time.time()
         self.retry_callback(self.tag, self.tries)
 
@@ -79,6 +79,9 @@ class RetryThread:
         self._thread = threading.Thread(name=name, target=self._thread_run)
         self._thread.start()
 
+    def is_alive(self):
+        return self._thread.is_alive()
+
     def close(self, loop: asyncio.AbstractEventLoop = None) -> asyncio.Future:
         self._log.debug("stopping timer thread")
         if loop is None:
@@ -88,6 +91,18 @@ class RetryThread:
         else:
             self._finished = loop.create_future()
             return self._finished
+
+    def wait(self, timeout: float = None):
+        if timeout:
+            timeout = timeout + time.time()
+
+        while timeout is None or time.time() < timeout:
+            with self._lock:
+                task_count = len(self._statuses)
+            if task_count == 0:
+                return
+            time.sleep(0.1)
+
 
     def _thread_run(self):
         while self._run and self._finished is None:

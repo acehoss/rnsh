@@ -1,3 +1,4 @@
+import contextlib
 from contextlib import AbstractContextManager
 
 
@@ -22,13 +23,4 @@ class permit(AbstractContextManager):
         pass
 
     def __exit__(self, exctype, excinst, exctb):
-        # Unlike isinstance and issubclass, CPython exception handling
-        # currently only looks at the concrete type hierarchy (ignoring
-        # the instance and subclass checking hooks). While Guido considers
-        # that a bug rather than a feature, it's a fairly hard one to fix
-        # due to various internal implementation details. suppress provides
-        # the simpler issubclass based semantics, rather than trying to
-        # exactly reproduce the limitations of the CPython interpreter.
-        #
-        # See http://bugs.python.org/issue12029 for more details
-        return exctype is not None and issubclass(exctype, self._exceptions)
+        return exctype is not None and not issubclass(exctype, self._exceptions)

@@ -42,6 +42,8 @@ import rnsh.exception as exception
 
 module_logger = __logging.getLogger(__name__)
 
+CTRL_C = "\x03".encode("utf-8")
+CTRL_D = "\x04".encode("utf-8")
 
 def tty_add_reader_callback(fd: int, callback: callable, loop: asyncio.AbstractEventLoop = None):
     """
@@ -336,14 +338,13 @@ class CallbackSubprocess:
 
         if self._pid == 0:
             try:
-                # this may not be strictly necessary, but there was
-                # is occasionally some funny business that goes on
-                # with networking. Anecdotally this fixed it, but
-                # more testing is needed as it might be a coincidence.
+                # This may not be strictly necessary, but there is
+                # occasionally some funny business that goes on with
+                # networking after the fork. Anecdotally this fixed
+                # it, but more testing is needed as it might be a
+                # coincidence.
                 p = psutil.Process()
                 for c in p.connections(kind='all'):
-                    if c == sys.stdin.fileno() or c == sys.stdout.fileno() or c == sys.stderr.fileno():
-                        continue
                     with exception.permit(SystemExit):
                         os.close(c.fd)
                 os.setpgrp()
