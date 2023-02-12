@@ -90,7 +90,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_API_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          release_name: ${{ steps.set_version.outputs.tag }}
           draft: true
           prerelease: false
           
@@ -100,8 +100,8 @@ jobs:
             GITHUB_TOKEN: ${{ secrets.GH_API_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/rnsh-${{ steps.set_version.outputs.version }}-py3-none-any.whl
-          asset_name: rnsh-${{ steps.set_version.outputs.version }}-py3-none-any.whl
+          asset_path: ./dist/rnsh-${{ steps.set_version.outputs.no-v }}-py3-none-any.whl
+          asset_name: rnsh-${{ steps.set_version.outputs.no-v }}-py3-none-any.whl
           asset_content_type: application/zip
 
 
