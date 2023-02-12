@@ -184,7 +184,9 @@ class TTYRestorer(contextlib.AbstractContextManager):
         :param fd: file descriptor of tty
         """
         self._fd = fd
-        self._tattr = termios.tcgetattr(self._fd)
+        self._tattr = None
+        with contextlib.suppress(termios.error):
+            termios.tcgetattr(self._fd)
 
     def raw(self):
         """
@@ -210,12 +212,13 @@ class TTYRestorer(contextlib.AbstractContextManager):
         """
         Restore termios settings to state captured in constructor.
         """
-        termios.tcsetattr(self._fd, termios.TCSADRAIN, self._tattr)
+        self.set_attr(self._tattr, termios.TCSADRAIN)
 
     def __exit__(self, __exc_type: typing.Type[BaseException], __exc_value: BaseException,
                  __traceback: types.TracebackType) -> bool:
-        self.restore()
-        return False
+        with contextlib.suppress(termios.error):
+            self.restore()
+        return __exc_type is not None and issubclass(__exc_type, termios.error)
 
 
 async def event_wait(evt: asyncio.Event, timeout: float) -> bool:
