@@ -52,7 +52,6 @@ class State(contextlib.AbstractContextManager):
         return False
 
 
-@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_echo():
     """
