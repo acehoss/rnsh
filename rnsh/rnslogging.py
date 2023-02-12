@@ -107,13 +107,15 @@ def _rns_log(msg, level=3, _override_destination=False):
 
     def _rns_log_inner():
         nonlocal msg, level, _override_destination
-        with process.TTYRestorer(sys.stdin.fileno()) as tr:
-            with exception.permit(SystemExit):
-                attr = tr.current_attr()
-                attr[process.TTYRestorer.ATTR_IDX_OFLAG] = attr[process.TTYRestorer.ATTR_IDX_OFLAG] | \
-                                                           termios.ONLRET | termios.ONLCR | termios.OPOST
-                tr.set_attr(attr)
-                _rns_log_orig(msg, level, _override_destination)
+        try:
+            with process.TTYRestorer(sys.stdin.fileno()) as tr:
+                    attr = tr.current_attr()
+                    attr[process.TTYRestorer.ATTR_IDX_OFLAG] = attr[process.TTYRestorer.ATTR_IDX_OFLAG] | \
+                                                               termios.ONLRET | termios.ONLCR | termios.OPOST
+                    tr.set_attr(attr)
+                    _rns_log_orig(msg, level, _override_destination)
+        except ValueError:
+            _rns_log_orig(msg, level, _override_destination)
 
     try:
         if _loop:
