@@ -60,19 +60,17 @@ jobs:
         run: poetry build
         
       - name: Set Versions
-        uses: actions/github-script@v4
+        uses: actions/github-script@v6.4.0
         id: set_version
         with:
           script: |
-              echo "version=${GITHUB_REF_NAME#*v}" >> $GITHUB_OUTPUT
-          
-#             const tag = context.ref.substring(18)
-#             const no_v = tag.replace('v', '')
-#             const dash_index = no_v.lastIndexOf('-')
-#             const no_dash = (dash_index > -1) ?  no_v.substring(0, dash_index) : no_v
-#             core.setOutput('tag', tag)
-#             core.setOutput('no-v', no_v)
-#             core.setOutput('no-dash', no_dash)
+            const tag = context.ref.substring(18)
+            const no_v = tag.replace('v', '')
+            const dash_index = no_v.lastIndexOf('-')
+            const no_dash = (dash_index > -1) ?  no_v.substring(0, dash_index) : no_v
+            core.setOutput('tag', tag)
+            core.setOutput('no-v', no_v)
+            core.setOutput('no-dash', no_dash)
         
         
 #       - name: Upload a Build Artifact
