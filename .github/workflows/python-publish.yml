@@ -64,13 +64,15 @@ jobs:
         id: set_version
         with:
           script: |
-            const tag = context.ref.substring(18)
-            const no_v = tag.replace('v', '')
-            const dash_index = no_v.lastIndexOf('-')
-            const no_dash = (dash_index > -1) ?  no_v.substring(0, dash_index) : no_v
-            core.setOutput('tag', tag)
-            core.setOutput('no-v', no_v)
-            core.setOutput('no-dash', no_dash)
+              echo "version=${GITHUB_REF_NAME#*v}" >> $GITHUB_OUTPUT
+          
+#             const tag = context.ref.substring(18)
+#             const no_v = tag.replace('v', '')
+#             const dash_index = no_v.lastIndexOf('-')
+#             const no_dash = (dash_index > -1) ?  no_v.substring(0, dash_index) : no_v
+#             core.setOutput('tag', tag)
+#             core.setOutput('no-v', no_v)
+#             core.setOutput('no-dash', no_dash)
         
         
 #       - name: Upload a Build Artifact
@@ -87,7 +89,7 @@ jobs:
         id: create_release
         uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
           release_name: Release ${{ github.ref }}
@@ -100,8 +102,8 @@ jobs:
             GITHUB_TOKEN: ${{ github.token }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/rnsh-${{ steps.set_version.outputs.no-v }}-py3-none-any.whl
-          asset_name: rnsh-${{ steps.set_version.outputs.no-v }}-py3-none-any.whl
+          asset_path: ./dist/rnsh-${{ steps.set_version.outputs.version }}-py3-none-any.whl
+          asset_name: rnsh-${{ steps.set_version.outputs.version }}-py3-none-any.whl
           asset_content_type: application/zip
 
 
