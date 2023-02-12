@@ -6,9 +6,10 @@
 # separate terms of service, privacy policy, and support
 # documentation.
 
-name: Upload to PyPI
+name: Publish
 
 on:
+  workflow_dispatch:
   release:
     types: [published]
 
@@ -51,8 +52,25 @@ jobs:
 
       - name: Test with pytest
         run: poetry run pytest -m "not skip_ci" tests
+        
+        
+      - name: Build package
+        run: poetry build
+        
+        
+      - name: Upload a Build Artifact
+        uses: actions/upload-artifact@v3.1.2
+        with:
+          # Artifact name
+          name: "pip package"
+          # A file, directory or wildcard pattern that describes what to upload
+          path: "dist/*"
+          # The desired behavior if no files are found using the provided path.
+          if-no-files-found: error
 
 
       - name: Publish to PyPI
-        run: poetry publish --build --username __token__ --password ${{ secrets.PYPI_API_TOKEN }}
+        env:
+          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
+        run: poetry publish
         

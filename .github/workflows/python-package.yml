@@ -1,6 +1,13 @@
 name: CI
 
-on: [push]
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'main'
+    paths-ignore:
+      - 'README.md'
+      - '.github/**'
 
 jobs:
 
