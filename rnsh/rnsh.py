@@ -115,7 +115,8 @@ async def _listen(configdir, command, identitypath=None, service_name="default",
     log = _get_logger("_listen")
     _cmd = command
 
-    targetloglevel = 3 + verbosity - quietness
+    targetloglevel = RNS.LOG_INFO + verbosity - quietness
+    rnslogging.RnsHandler.set_global_log_level(__logging.INFO)
     _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
     _prepare_identity(identitypath)
     _destination = RNS.Destination(_identity, RNS.Destination.IN, RNS.Destination.SINGLE, APP_NAME, service_name)
@@ -636,7 +637,8 @@ async def _execute(configdir, identitypath=None, verbosity=0, quietness=0, noid=
         raise RemoteExecutionError("Invalid destination entered. Check your input.")
 
     if _reticulum is None:
-        targetloglevel = 2 + verbosity - quietness
+        targetloglevel = RNS.LOG_ERROR + verbosity - quietness
+        rnslogging.RnsHandler.set_global_log_level(__logging.ERROR)
         _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
 
     if _identity is None:

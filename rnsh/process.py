@@ -192,6 +192,9 @@ class TTYRestorer(contextlib.AbstractContextManager):
         """
         Set raw mode on tty
         """
+        if not self._fd:
+            return
+
         tty.setraw(self._fd, termios.TCSADRAIN)
 
     def current_attr(self) -> [any]:
@@ -199,14 +202,22 @@ class TTYRestorer(contextlib.AbstractContextManager):
         Get the current termios attributes for the wrapped fd.
         :return: attribute array
         """
-        return termios.tcgetattr(self._fd).copy()
+        if not self._fd:
+            return None
+
+        return termios.tcgetattr(self._fd)
 
     def set_attr(self, attr: [any], when: int = termios.TCSANOW):
         """
         Set termios attributes
         :param attr: attribute list to set
+        :param when: when attributes should be applied (termios.TCSANOW, termios.TCSADRAIN, termios.TCSAFLUSH)
         """
-        termios.tcsetattr(self._fd, when, attr)
+        if not attr or not self._fd:
+            return
+
+        with contextlib.suppress(termios.error):
+            termios.tcsetattr(self._fd, when, attr)
 
     def restore(self):
         """
@@ -216,8 +227,7 @@ class TTYRestorer(contextlib.AbstractContextManager):
 
     def __exit__(self, __exc_type: typing.Type[BaseException], __exc_value: BaseException,
                  __traceback: types.TracebackType) -> bool:
-        with contextlib.suppress(termios.error):
-            self.restore()
+        self.restore()
         return __exc_type is not None and issubclass(__exc_type, termios.error)
 
 

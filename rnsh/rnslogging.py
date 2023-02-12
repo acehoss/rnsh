@@ -60,6 +60,11 @@ class RnsHandler(Handler):
             return RNS.LOG_DEBUG
         return RNS.LOG_DEBUG
 
+    @classmethod
+    def set_global_log_level(cls, log_level: int):
+        logging.getLogger().setLevel(log_level)
+        RNS.loglevel = cls.get_rns_loglevel(log_level)
+
     def emit(self, record):
         """
         Emit a record.
@@ -109,16 +114,17 @@ def _rns_log(msg, level=3, _override_destination=False):
         nonlocal msg, level, _override_destination
         try:
             with process.TTYRestorer(sys.stdin.fileno()) as tr:
-                    attr = tr.current_attr()
+                attr = tr.current_attr()
+                if attr:
                     attr[process.TTYRestorer.ATTR_IDX_OFLAG] = attr[process.TTYRestorer.ATTR_IDX_OFLAG] | \
                                                                termios.ONLRET | termios.ONLCR | termios.OPOST
                     tr.set_attr(attr)
-                    _rns_log_orig(msg, level, _override_destination)
+                _rns_log_orig(msg, level, _override_destination)
         except ValueError:
             _rns_log_orig(msg, level, _override_destination)
 
     try:
-        if _loop:
+        if _loop and _loop.is_running():
             _loop.call_soon_threadsafe(_rns_log_inner)
         else:
             _rns_log_inner()
