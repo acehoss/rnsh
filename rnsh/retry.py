@@ -27,6 +27,9 @@ import time
 import rnsh.exception as exception
 import logging as __logging
 from typing import Callable
+from contextlib import AbstractContextManager
+import types
+import typing
 
 module_logger = __logging.getLogger(__name__)
 
@@ -67,7 +70,7 @@ class RetryStatus:
         self.retry_callback(self.tag, self.tries)
 
 
-class RetryThread:
+class RetryThread(AbstractContextManager):
     def __init__(self, loop_period: float = 0.25, name: str = "retry thread"):
         self._log = module_logger.getChild(self.__class__.__name__)
         self._loop_period = loop_period
@@ -176,3 +179,8 @@ class RetryThread:
                 status.completed = True
                 self._log.debug(f"completed {status.tag}")
             self._statuses.clear()
+
+    def __exit__(self, __exc_type: typing.Type[BaseException], __exc_value: BaseException,
+                 __traceback: types.TracebackType) -> bool:
+        self.close()
+        return False
