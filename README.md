@@ -66,10 +66,10 @@ rnsh a5f72aefc2cb3cdba648f73f77c4e887
 Usage:
     rnsh [--config <configdir>] [-i <identityfile>] [-s <service_name>] [-l] -p
     rnsh -l [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
-         [-v...] [-q...] [-b] (-n | -a <identity_hash> [-a <identity_hash>]...) 
-         [--] <program> [<arg>...]
+         [-v... | -q...] [-b <period>] (-n | -a <identity_hash> [-a <identity_hash>] ...) 
+         [--] <program> [<arg> ...]
     rnsh [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
-         [-v...] [-q...] [-N] [-m] [-w <timeout>] <destination_hash>
+         [-v... | -q...] [-N] [-m] [-w <timeout>] <destination_hash>
     rnsh -h
     rnsh --version
 
@@ -79,13 +79,20 @@ Options:
     -s NAME --service NAME   Listen on/connect to specific service name if not default
     -p --print-identity      Print identity information and exit
     -l --listen              Listen (server) mode
-    -b --no-announce         Do not announce service
+    -b --announce PERIOD     Announce on startup and every PERIOD seconds
+                             Specify 0 for PERIOD to announce on startup only.
     -a HASH --allowed HASH   Specify identities allowed to connect
     -n --no-auth             Disable authentication
     -N --no-id               Disable identify on connect
     -m --mirror              Client returns with code of remote process
     -w TIME --timeout TIME   Specify client connect and request timeout in seconds
     -v --verbose             Increase verbosity
+                                    DEFAULT LEVEL
+                                              CRITICAL
+                                Initiator ->  ERROR
+                                              WARNING
+                                 Listener ->  INFO
+                                              DEBUG
     -q --quiet               Increase quietness
     --version                Show version
     -h --help                Show this help

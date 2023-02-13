@@ -22,6 +22,7 @@
 
 import asyncio
 import contextlib
+import copy
 import errno
 import fcntl
 import functools
@@ -77,24 +78,27 @@ def tty_read(fd: int) -> bytes:
     if fd_is_closed(fd):
         return None
 
-    run = True
-    result = bytearray()
-    while run and not fd_is_closed(fd):
-        ready, _, _ = select.select([fd], [], [], 0)
-        if len(ready) == 0:
-            break
-        for f in ready:
-            try:
-                data = os.read(f, 512)
-            except OSError as e:
-                if e.errno != errno.EIO and e.errno != errno.EWOULDBLOCK:
-                    raise
-            else:
-                if not data:  # EOF
-                    run = False
-                if data is not None and len(data) > 0:
-                    result.extend(data)
-    return result
+    try:
+        run = True
+        result = bytearray()
+        while run and not fd_is_closed(fd):
+            ready, _, _ = select.select([fd], [], [], 0)
+            if len(ready) == 0:
+                break
+            for f in ready:
+                try:
+                    data = os.read(f, 4096)
+                except OSError as e:
+                    if e.errno != errno.EIO and e.errno != errno.EWOULDBLOCK:
+                        raise
+                else:
+                    if not data:  # EOF
+                        run = False
+                    if data is not None and len(data) > 0:
+                        result.extend(data)
+        return result
+    except Exception as ex:
+        module_logger.error("tty_read error: {ex}")
 
 
 def fd_is_closed(fd: int) -> bool:
@@ -169,7 +173,7 @@ class TTYRestorer(contextlib.AbstractContextManager):
     ATTR_IDX_LFLAG = 4
     ATTR_IDX_CC    = 5
 
-    def __init__(self, fd: int):
+    def __init__(self, fd: int, suppress_logs=False):
         """
         Saves termios attributes for a tty for later restoration.
 
@@ -183,29 +187,37 @@ class TTYRestorer(contextlib.AbstractContextManager):
 
         :param fd: file descriptor of tty
         """
+        self._log = module_logger.getChild(self.__class__.__name__)
         self._fd = fd
         self._tattr = None
-        with contextlib.suppress(termios.error):
-            termios.tcgetattr(self._fd)
+        self._suppress_logs = suppress_logs
+        self._tattr = self.current_attr()
+        if not self._tattr and not self._suppress_logs:
+            self._log.warning(f"Could not get attrs for fd {fd}")
 
     def raw(self):
         """
         Set raw mode on tty
         """
-        if not self._fd:
+        if self._fd is None:
             return
+        with contextlib.suppress(termios.error):
+            tty.setraw(self._fd, termios.TCSANOW)
 
-        tty.setraw(self._fd, termios.TCSADRAIN)
+    def original_attr(self) -> [any]:
+        return copy.deepcopy(self._tattr)
 
     def current_attr(self) -> [any]:
         """
         Get the current termios attributes for the wrapped fd.
         :return: attribute array
         """
-        if not self._fd:
+        if self._fd is None:
             return None
 
-        return termios.tcgetattr(self._fd)
+        with contextlib.suppress(termios.error):
+            return copy.deepcopy(termios.tcgetattr(self._fd))
+        return None
 
     def set_attr(self, attr: [any], when: int = termios.TCSANOW):
         """
@@ -213,7 +225,7 @@ class TTYRestorer(contextlib.AbstractContextManager):
         :param attr: attribute list to set
         :param when: when attributes should be applied (termios.TCSANOW, termios.TCSADRAIN, termios.TCSAFLUSH)
         """
-        if not attr or not self._fd:
+        if not attr or self._fd is None:
             return
 
         with contextlib.suppress(termios.error):
@@ -228,7 +240,64 @@ class TTYRestorer(contextlib.AbstractContextManager):
     def __exit__(self, __exc_type: typing.Type[BaseException], __exc_value: BaseException,
                  __traceback: types.TracebackType) -> bool:
         self.restore()
-        return __exc_type is not None and issubclass(__exc_type, termios.error)
+        return False  #__exc_type is not None and issubclass(__exc_type, termios.error)
+
+
+def _task_from_event(evt: asyncio.Event, loop: asyncio.AbstractEventLoop = None):
+    if not loop:
+        loop = asyncio.get_running_loop()
+
+    #TODO: this is hacky
+    async def wait():
+        while not evt.is_set():
+            await asyncio.sleep(0.1)
+        return True
+
+    return loop.create_task(wait())
+
+
+class AggregateException(Exception):
+    def __init__(self, inner_exceptions: [Exception]):
+        super().__init__()
+        self.inner_exceptions = inner_exceptions
+
+    def __str__(self):
+        return "Multiple exceptions encountered: \n\n" + "\n\n".join(map(lambda e: str(e), self.inner_exceptions))
+
+async def event_wait_any(evts: [asyncio.Event], timeout: float  = None) -> (any, any):
+    tasks = list(map(lambda evt: (evt, _task_from_event(evt)), evts))
+    # try:
+    finished, unfinished = await asyncio.wait(map(lambda t: t[1], tasks),
+                                              timeout=timeout,
+                                              return_when=asyncio.FIRST_COMPLETED)
+
+    if len(unfinished) > 0:
+        for task in unfinished:
+            task.cancel()
+        await asyncio.wait(unfinished)
+
+    # exceptions = []
+    #
+    # for f in finished:
+    #     ex = f.exception()
+    #     if ex and not isinstance(ex, asyncio.CancelledError) and not isinstance(ex, TimeoutError):
+    #         exceptions.append(ex)
+    #
+    # if len(exceptions) > 0:
+    #     raise AggregateException(exceptions)
+
+    return next(map(lambda t: next(map(lambda tt: tt[0], tasks)), finished), None)
+    # finally:
+    #     unfinished = []
+    #     for task in map(lambda t: t[1], tasks):
+    #         if task.done():
+    #             if not task.cancelled():
+    #                 task.exception()
+    #         else:
+    #             task.cancel()
+    #             unfinished.append(task)
+    #     if len(unfinished) > 0:
+    #         await asyncio.wait(unfinished)
 
 
 async def event_wait(evt: asyncio.Event, timeout: float) -> bool:
@@ -238,9 +307,7 @@ async def event_wait(evt: asyncio.Event, timeout: float) -> bool:
     :param timeout: maximum number of seconds to wait.
     :return: True if event was set, False if timeout expired
     """
-    # suppress TimeoutError because we'll return False in case of timeout
-    with contextlib.suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(evt.wait(), timeout)
+    await event_wait_any([evt], timeout=timeout)
     return evt.is_set()
 
 
@@ -408,6 +475,8 @@ class CallbackSubprocess:
             # self.log.debug("poll")
             try:
                 pid, self._return_code = os.waitpid(self._pid, os.WNOHANG)
+                if self._return_code is not None:
+                    self._return_code = self._return_code & 0xff
                 if self._return_code is not None and not process_exists(self._pid):
                     self._log.debug(f"polled return code {self._return_code}")
                     self._terminated_cb(self._return_code)

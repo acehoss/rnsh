@@ -60,10 +60,29 @@ class RnsHandler(Handler):
             return RNS.LOG_DEBUG
         return RNS.LOG_DEBUG
 
+    def get_logging_loglevel(rnsloglevel: int) -> int:
+        if rnsloglevel == RNS.LOG_CRITICAL:
+            return logging.CRITICAL
+        if rnsloglevel == RNS.LOG_ERROR:
+            return logging.ERROR
+        if rnsloglevel == RNS.LOG_WARNING:
+            return logging.WARNING
+        if rnsloglevel == RNS.LOG_NOTICE:
+            return logging.INFO
+        if rnsloglevel == RNS.LOG_INFO:
+            return logging.INFO
+        if rnsloglevel >= RNS.LOG_VERBOSE:
+            return RNS.LOG_DEBUG
+        return RNS.LOG_DEBUG
+
     @classmethod
-    def set_global_log_level(cls, log_level: int):
-        logging.getLogger().setLevel(log_level)
-        RNS.loglevel = cls.get_rns_loglevel(log_level)
+    def set_log_level_with_rns_level(cls, rns_log_level: int):
+        logging.getLogger().setLevel(RnsHandler.get_logging_loglevel(rns_log_level))
+        RNS.loglevel = rns_log_level
+
+    def set_log_level_with_logging_level(cls, logging_log_level: int):
+        logging.getLogger().setLevel(logging_log_level)
+        RNS.loglevel = cls.get_rns_loglevel(logging_log_level)
 
     def emit(self, record):
         """
@@ -107,13 +126,16 @@ _rns_log_orig = RNS.log
 
 
 def _rns_log(msg, level=3, _override_destination=False):
+    if RNS.loglevel < level:
+        return
+
     if not RNS.compact_log_fmt:
         msg = (" " * (7 - len(RNS.loglevelname(level)))) + msg
 
     def _rns_log_inner():
         nonlocal msg, level, _override_destination
         try:
-            with process.TTYRestorer(sys.stdin.fileno()) as tr:
+            with process.TTYRestorer(sys.stdin.fileno(), suppress_logs=True) as tr:
                 attr = tr.current_attr()
                 if attr:
                     attr[process.TTYRestorer.ATTR_IDX_OFLAG] = attr[process.TTYRestorer.ATTR_IDX_OFLAG] | \
@@ -123,12 +145,13 @@ def _rns_log(msg, level=3, _override_destination=False):
         except ValueError:
             _rns_log_orig(msg, level, _override_destination)
 
+    # TODO: figure out if forcing this to the main thread actually helps.
     try:
         if _loop and _loop.is_running():
             _loop.call_soon_threadsafe(_rns_log_inner)
         else:
             _rns_log_inner()
-    except RuntimeError:
+    except:
         _rns_log_inner()
 
 
