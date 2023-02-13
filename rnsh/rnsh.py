@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import functools
+import importlib.metadata
 import logging as __logging
 import os
 import signal
@@ -42,7 +43,6 @@ import rnsh.process as process
 import rnsh.retry as retry
 import rnsh.rnslogging as rnslogging
 import rnsh.hacks as hacks
-from rnsh.__version import __version__
 
 module_logger = __logging.getLogger(__name__)
 
@@ -885,14 +885,14 @@ Options:
     -N --no-id               Disable identify on connect
     -m --mirror              Client returns with code of remote process
     -w TIME --timeout TIME   Specify client connect and request timeout in seconds
-    -v --verbose             Increase verbosity
-                                    DEFAULT LEVEL
-                                              CRITICAL
+    -q --quiet               Increase quietness (move level up), multiple increases effect
+                                     DEFAULT LOGGING LEVEL
+                                              CRITICAL (silent)
                                 Initiator ->  ERROR
                                               WARNING
                                  Listener ->  INFO
-                                              DEBUG
-    -q --quiet               Increase quietness
+                                              DEBUG    (insane)
+    -v --verbose             Increase verbosity (move level down), multiple increases effect
     --version                Show version
     -h --help                Show this help
     '''
@@ -902,7 +902,7 @@ Options:
         argv.append(program_args[0])
         program_args = program_args[1:]
 
-    args = docopt.docopt(usage, argv=argv[1:], version=f"rnsh {__version__}")
+    args = docopt.docopt(usage, argv=argv[1:], version=f"rnsh {importlib.metadata.version('rnsh')}")
     # json.dump(args, sys.stdout)
 
     args_service_name = args.get("--service", None) or "default"

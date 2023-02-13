@@ -86,14 +86,14 @@ Options:
     -N --no-id               Disable identify on connect
     -m --mirror              Client returns with code of remote process
     -w TIME --timeout TIME   Specify client connect and request timeout in seconds
-    -v --verbose             Increase verbosity
-                                    DEFAULT LEVEL
-                                              CRITICAL
+    -q --quiet               Increase quietness (move level up), multiple increases effect
+                                     DEFAULT LOGGING LEVEL
+                                              CRITICAL (silent)
                                 Initiator ->  ERROR
                                               WARNING
                                  Listener ->  INFO
-                                              DEBUG
-    -q --quiet               Increase quietness
+                                              DEBUG    (insane)
+    -v --verbose             Increase verbosity (move level down), multiple increases effect
     --version                Show version
     -h --help                Show this help
 ```
