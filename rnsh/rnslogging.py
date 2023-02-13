@@ -142,7 +142,7 @@ def _rns_log(msg, level=3, _override_destination=False):
                                                                termios.ONLRET | termios.ONLCR | termios.OPOST
                     tr.set_attr(attr)
                 _rns_log_orig(msg, level, _override_destination)
-        except ValueError:
+        except:
             _rns_log_orig(msg, level, _override_destination)
 
     # TODO: figure out if forcing this to the main thread actually helps.
