@@ -104,7 +104,7 @@ async def test_echo_live():
 
 @pytest.mark.asyncio
 async def test_event_wait_any():
-    delay = 0.1
+    delay = 0.5
     with multiprocessing.pool.ThreadPool() as pool:
         loop = asyncio.get_running_loop()
         evt1 = asyncio.Event()
