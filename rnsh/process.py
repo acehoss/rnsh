@@ -76,12 +76,12 @@ def tty_read(fd: int) -> bytes:
     :return: bytes read
     """
     if fd_is_closed(fd):
-        return None
+        raise EOFError
 
     try:
         run = True
         result = bytearray()
-        while run and not fd_is_closed(fd):
+        while not fd_is_closed(fd):
             ready, _, _ = select.select([fd], [], [], 0)
             if len(ready) == 0:
                 break
@@ -93,10 +93,16 @@ def tty_read(fd: int) -> bytes:
                         raise
                 else:
                     if not data:  # EOF
-                        run = False
+                        if data is not None and len(data) > 0:
+                            result.extend(data)
+                            return result
+                        else:
+                            raise EOFError
                     if data is not None and len(data) > 0:
                         result.extend(data)
         return result
+    except EOFError:
+        raise
     except Exception as ex:
         module_logger.error("tty_read error: {ex}")
 
@@ -193,7 +199,7 @@ class TTYRestorer(contextlib.AbstractContextManager):
         self._suppress_logs = suppress_logs
         self._tattr = self.current_attr()
         if not self._tattr and not self._suppress_logs:
-            self._log.warning(f"Could not get attrs for fd {fd}")
+            self._log.debug(f"Could not get attrs for fd {fd}")
 
     def raw(self):
         """
@@ -230,6 +236,9 @@ class TTYRestorer(contextlib.AbstractContextManager):
 
         with contextlib.suppress(termios.error):
             termios.tcsetattr(self._fd, when, attr)
+
+    def isatty(self):
+        return os.isatty(self._fd) if self._fd is not None else None
 
     def restore(self):
         """
@@ -363,9 +372,10 @@ class CallbackSubprocess:
         self._loop.call_later(kill_delay, kill)
 
         def wait():
-            self._log.debug("wait()")
-            os.waitpid(self._pid, 0)
-            self._log.debug("wait() finish")
+            with contextlib.suppress(OSError):
+                self._log.debug("wait()")
+                os.waitpid(self._pid, 0)
+                self._log.debug("wait() finish")
 
         threading.Thread(target=wait).start()
 
@@ -425,6 +435,9 @@ class CallbackSubprocess:
         :return: tty attributes value
         """
         return termios.tcgetattr(self._child_fd)
+
+    def ttysetraw(self):
+        tty.setraw(self._child_fd, termios.TCSANOW)
 
     def start(self):
         """
@@ -489,10 +502,14 @@ class CallbackSubprocess:
         self._loop.call_later(CallbackSubprocess.PROCESS_POLL_TIME, poll)
 
         def reader(fd: int, callback: callable):
-            with exception.permit(SystemExit):
-                data = tty_read(fd)
-                if data is not None and len(data) > 0:
-                    callback(data)
+            try:
+                with exception.permit(SystemExit):
+                    data = tty_read(fd)
+                    if data is not None and len(data) > 0:
+                        callback(data)
+            except EOFError:
+                tty_unset_reader_callbacks(self._child_fd)
+                callback(CTRL_D)
 
         tty_add_reader_callback(self._child_fd, functools.partial(reader, self._child_fd, self._stdout_cb), self._loop)
 
@@ -546,11 +563,15 @@ async def main():
     signal.signal(signal.SIGWINCH, sigwinch_handler)
 
     def stdin():
-        data = tty_read(sys.stdin.fileno())
-        # log.debug(f"stdin {data}")
-        if data is not None:
-            process.write(data)
-            # sys.stdout.buffer.write(data)
+        try:
+            data = tty_read(sys.stdin.fileno())
+            # log.debug(f"stdin {data}")
+            if data is not None:
+                process.write(data)
+                # sys.stdout.buffer.write(data)
+        except EOFError:
+            tty_unset_reader_callbacks(sys.stdin.fileno())
+            process.write(CTRL_D)
 
     tty_add_reader_callback(sys.stdin.fileno(), stdin)
     process.start()

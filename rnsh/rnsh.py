@@ -43,6 +43,8 @@ import rnsh.process as process
 import rnsh.retry as retry
 import rnsh.rnslogging as rnslogging
 import rnsh.hacks as hacks
+import re
+import contextlib
 
 module_logger = __logging.getLogger(__name__)
 
@@ -351,11 +353,12 @@ class Session:
 
         if stdin_fd is not None:
             request[Session.REQUEST_IDX_TERM] = os.environ.get("TERM", None)
-            request[Session.REQUEST_IDX_TIOS] = _tr.original_attr() if _tr else termios.tcgetattr(stdin_fd)
-            request[Session.REQUEST_IDX_ROWS], \
-                request[Session.REQUEST_IDX_COLS], \
-                request[Session.REQUEST_IDX_HPIX], \
-                request[Session.REQUEST_IDX_VPIX] = process.tty_get_winsize(stdin_fd)
+            request[Session.REQUEST_IDX_TIOS] = _tr.original_attr() if _tr else None
+            with contextlib.suppress(OSError):
+                request[Session.REQUEST_IDX_ROWS], \
+                    request[Session.REQUEST_IDX_COLS], \
+                    request[Session.REQUEST_IDX_HPIX], \
+                    request[Session.REQUEST_IDX_VPIX] = process.tty_get_winsize(stdin_fd)
         return request
 
     def process_request(self, data: [any], read_size: int) -> [any]:
@@ -368,14 +371,20 @@ class Session:
         # vpix = data[ProcessState.REQUEST_IDX_VPIX]  # window vertical pixels
         # term_state = data[ProcessState.REQUEST_IDX_ROWS:ProcessState.REQUEST_IDX_VPIX+1]
         response = Session.default_response()
+
+        first_term_state = self._term_state is None
         term_state = data[Session.REQUEST_IDX_TIOS:Session.REQUEST_IDX_VPIX + 1]
 
         response[Session.RESPONSE_IDX_RUNNING] = self.process.running
         if self.process.running:
             if term_state != self._term_state:
                 self._term_state = term_state
-                self._update_winsz()
-                # self.process.tcsetattr(termios.TCSANOW, self._term_state[0])
+                if term_state is not None:
+                    self._update_winsz()
+                    if first_term_state is not None:
+                        # TODO: use a more specific error
+                        with contextlib.suppress(Exception):
+                            self.process.tcsetattr(termios.TCSANOW, term_state[0])
             if stdin is not None and len(stdin) > 0:
                 stdin = base64.b64decode(stdin)
                 self.process.write(stdin)
@@ -567,6 +576,9 @@ def _listen_request(path, data, request_id, link_id, remote_identity, requested_
     session: Session | None = None
     try:
         term = data[Session.REQUEST_IDX_TERM]
+        # sanitize
+        if term is not None:
+            term = re.sub('[^A-Za-z-0-9\-\_]','', term)
         session = Session.get_for_tag(link.link_id)
         if session is None:
             log.debug(f"Process not found for link {link}")
@@ -684,6 +696,8 @@ async def _execute(configdir, identitypath=None, verbosity=0, quietness=0, noid=
     _link.set_packet_callback(_client_packet_handler)
 
     request = Session.default_request(sys.stdin.fileno())
+    log.debug(f"Sending {len(stdin) or 0} bytes to listener")
+    # log.debug(f"Sending {stdin} to listener")
     request[Session.REQUEST_IDX_STDIN] = (base64.b64encode(stdin) if stdin is not None else None)
 
     # TODO: Tune
@@ -769,7 +783,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
     loop = asyncio.get_running_loop()
     _new_data = asyncio.Event()
 
-    data_buffer = bytearray()
+    data_buffer = bytearray(sys.stdin.buffer.read()) if not os.isatty(sys.stdin.fileno()) else bytearray()
 
     def sigwinch_handler():
         # log.debug("WindowChanged")
@@ -777,11 +791,15 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
             _new_data.set()
 
     def stdin():
-        data = process.tty_read(sys.stdin.fileno())
-        log.debug(f"stdin {data}")
-        if data is not None:
-            data_buffer.extend(data)
-            _new_data.set()
+        try:
+            data = process.tty_read(sys.stdin.fileno())
+            log.debug(f"stdin {data}")
+            if data is not None:
+                data_buffer.extend(data)
+                _new_data.set()
+        except EOFError:
+            data_buffer.extend(process.CTRL_D)
+            process.tty_unset_reader_callbacks(sys.stdin.fileno())
 
     process.tty_add_reader_callback(sys.stdin.fileno(), stdin)
 
@@ -978,6 +996,9 @@ def _noop():
 
 def rnsh_cli():
     global _tr, _retry_timer
+    with contextlib.suppress(Exception):
+        if not os.isatty(sys.stdin.fileno()):
+            tty.setraw(sys.stdin.fileno(), termios.TCSANOW)
     with process.TTYRestorer(sys.stdin.fileno()) as _tr, retry.RetryThread() as _retry_timer:
         return_code = asyncio.run(_rnsh_cli_main())
 
