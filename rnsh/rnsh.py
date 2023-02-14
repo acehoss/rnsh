@@ -493,8 +493,7 @@ def _subproc_data_ready(link: RNS.Link, chars_available: int):
             _retry_timer.begin(try_limit=15,
                                wait_delay=max(link.rtt * 5 if link.rtt is not None else 1, 1),
                                try_callback=functools.partial(send, False),
-                               timeout_callback=functools.partial(send, True),
-                               tag=None)
+                               timeout_callback=functools.partial(send, True))
         else:
             log.debug(f"Notification already pending for link {link}")
 
