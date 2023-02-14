@@ -8,6 +8,13 @@ on:
     paths-ignore:
       - 'README.md'
       - '.github/**'
+  pull_request:
+    types:
+      - opened
+    branches:
+      - 'main'
+    paths-ignore:
+      - 'README.md'
 
 jobs:
 
