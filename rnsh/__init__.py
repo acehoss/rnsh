@@ -19,3 +19,21 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+
+import os
+module_abs_filename = os.path.abspath(__file__)
+module_dir = os.path.dirname(module_abs_filename)
+# print(os.path.dirname(module_dir))
+
+def _get_version():
+    try:
+        try:
+            import tomli
+            return tomli.load(open(os.path.join(os.path.dirname(module_dir), "pyproject.toml"), "rb"))["tool"]["poetry"]["version"]
+        except:
+            from importlib.metadata import version
+            return version(__package__)
+    except:
+        return "0.0.0"
+
+__version__ = _get_version()

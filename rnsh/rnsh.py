@@ -248,7 +248,7 @@ def _protocol_response_chars_take(link_mdu: int, version: int) -> int:
 
 def _protocol_request_chars_take(link_mdu: int, version: int, term: str, cmd: str) -> int:
     if version >= _PROTOCOL_VERSION_2:
-        return link_mdu - 15 * 8 - len(term) - len(cmd) - 20 # TODO: tune
+        return link_mdu - 15 * 8 - len(term) - len(cmd) - 20  # TODO: tune
     else:
         return link_mdu // 2
 
@@ -417,7 +417,7 @@ class Session:
                     if first_term_state is not None:
                         # TODO: use a more specific error
                         with contextlib.suppress(Exception):
-                            self.process.tcsetattr(termios.TCSANOW, term_state[0])
+                            self.process.tcsetattr(termios.TCSADRAIN, term_state[0])
             if stdin is not None and len(stdin) > 0:
                 if data[Session.REQUEST_IDX_VERS] < _PROTOCOL_VERSION_2:
                     stdin = base64.b64decode(stdin)
@@ -542,7 +542,7 @@ def _subproc_terminated(link: RNS.Link, return_code: int):
     _loop.call_soon_threadsafe(cleanup)
 
 
-def _listen_start_proc(link: RNS.Link, remote_identity: str | None, term: str, cmd: str | None,
+def _listen_start_proc(link: RNS.Link, remote_identity: str | None, term: str, cmd: [str],
                        loop: asyncio.AbstractEventLoop) -> Session | None:
     log = _get_logger("_listen_start_proc")
     try:
@@ -839,9 +839,6 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
     log = _get_logger("_initiate")
     loop = asyncio.get_running_loop()
     _new_data = asyncio.Event()
-    command = command
-    if command is not None and len(command) == 1:
-        command = shlex.split(command[0])
 
     data_buffer = bytearray(sys.stdin.buffer.read()) if not os.isatty(sys.stdin.fileno()) else bytearray()
 
@@ -870,6 +867,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
     mdu = 64
     rtt = 5
     first_loop = True
+    cmdline = " ".join(command or [])
     while not await _check_finished():
         try:
             log.debug("top of client loop")
@@ -895,7 +893,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
                 mdu = _protocol_request_chars_take(_link.MDU,
                                                    _PROTOCOL_VERSION_DEFAULT,
                                                    os.environ.get("TERM", ""),
-                                                   " ".join(command))
+                                                   cmdline)
                 _new_data.set()
 
             if _link:
@@ -916,6 +914,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
             return 255
 
         await process.event_wait_any([_new_data, _finished], timeout=min(max(rtt * 50, 5), 120))
+    return 0
 
 
 def _loop_set_signal(sig, loop):
@@ -942,7 +941,7 @@ async def _rnsh_cli_main():
     if args.listen:
         # log.info("command " + args.command)
         await _listen(configdir=args.config,
-                      command=args.program_args,
+                      command=args.command_line,
                       identitypath=args.identity,
                       service_name=args.service_name,
                       verbosity=args.verbose,
@@ -964,7 +963,7 @@ async def _rnsh_cli_main():
             destination=args.destination,
             service_name=args.service_name,
             timeout=args.timeout,
-            command=args.program_args
+            command=args.command_line
         )
         return return_code if args.mirror else 0
     else:
@@ -979,7 +978,7 @@ def rnsh_cli():
     with contextlib.suppress(Exception):
         if not os.isatty(sys.stdin.fileno()):
             time.sleep(0.1)  # attempting to deal with an issue with missing input
-            tty.setraw(sys.stdin.fileno(), termios.TCSANOW)
+            tty.setraw(sys.stdin.fileno(), termios.TCSADRAIN)
 
     with process.TTYRestorer(sys.stdin.fileno()) as _tr, retry.RetryThread() as _retry_timer:
         return_code = asyncio.run(_rnsh_cli_main())

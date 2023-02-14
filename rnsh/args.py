@@ -1,6 +1,6 @@
 from typing import TypeVar
 import RNS
-import importlib.metadata
+import rnsh
 import docopt
 import sys
 
@@ -64,13 +64,16 @@ class Args:
     def __init__(self, argv: [str]):
         global usage
         try:
-            argv, program_args = _split_array_at(argv, "--")
+            self.argv = argv
+            self.program_args = []
+            self.docopts_argv, self.program_args = _split_array_at(self.argv, "--")
             # need to add first arg after -- back onto argv for docopts, but only for listener
-            if len(program_args) > 0 and next(filter(lambda a: a == "-l" or a == "--listen", argv), None) is not None:
-                argv.append(program_args[0])
-                self.program_args = program_args[1:]
+            if next(filter(lambda a: a == "-l" or a == "--listen", self.docopts_argv), None) is not None \
+                    and len(self.program_args) > 0:
+                self.docopts_argv.append(self.program_args[0])
+                self.program_args = self.program_args[1:]
     
-            args = docopt.docopt(usage, argv=argv[1:], version=f"rnsh {importlib.metadata.version('rnsh')}")
+            args = docopt.docopt(usage, argv=self.docopts_argv[1:], version=f"rnsh {rnsh.__version__}")
             # json.dump(args, sys.stdout)
     
             self.service_name = args.get("--service", None) or "default"
@@ -87,23 +90,23 @@ class Args:
                     self.announce = int(announce)
             except ValueError:
                 print("Invalid value for --announce")
-                self.valid = False
+                sys.exit(1)
             self.no_auth = args.get("--no-auth", None) or False
             self.allowed = args.get("--allowed", None) or []
             self.remote_cmd_as_args = args.get("--remote-command-as-args", None) or False
             self.no_remote_cmd = args.get("--no-remote-command", None) or False
             self.program = args.get("<program>", None)
-            self.program_args = args.get("<arg>", None) or []
-            if self.program is not None:
-                self.program_args.insert(0, self.program)
-            self.program_args.extend(program_args)
+            if len(self.program_args) == 0:
+                self.program_args = args.get("<arg>", None) or []
             self.no_id = args.get("--no-id", None) or False
             self.mirror = args.get("--mirror", None) or False
             self.timeout = args.get("--timeout", None) or RNS.Transport.PATH_REQUEST_TIMEOUT
             self.destination = args.get("<destination_hash>", None)
             self.help = args.get("--help", None) or False
+            self.command_line = [self.program] if self.program else []
+            self.command_line.extend(self.program_args)
         except Exception as e:
-            print("Error parsing arguments: {e}")
+            print(f"Error parsing arguments: {e}")
             print()
             print(usage)
             sys.exit(1)

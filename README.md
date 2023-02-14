@@ -17,13 +17,35 @@ out.
 
 Anyway, there's a lot of room for improvement.
 
-## Alpha Software
+## Contents
+
+- [Alpha Disclaimer](#reminder--alpha-software)
+- [Recent Changes](#recent-changes)
+- [Quickstart](#quickstart)
+- [Options](#options)
+- [How it works](#how-it-works)
+- [Roadmap](#roadmap)
+- [Active TODO](#todo)
+
+### Reminder: Alpha Software
 These early versions will be buggy. There will sometimes be major
 breaking changes to the command line parameters between releases.
 There will sometimes be breaking changes in the protocol between
 releases. Use at your own peril!
 
 ## Recent Changes
+### v0.0.8
+- Improved test suite exposed several issues with the handling of
+command line arguments which are now fixed
+- Fixed a race condition that would cause remote characters to be 
+  lost intermittently when running remote commands that finish
+  immediately.
+- Added automated testing that actually spins up a random listener
+  and initiator in a private Reticulum network and passes data
+  between them, uncovering more issues which are now fixed.
+- Fixed (hopefully) an issue where `rnsh` doesn't know what
+  version it is.
+
 ### v0.0.7
 Added `-A` command line option. This listener option causes the
 remote command line to be appended to the arguments list of the
@@ -200,7 +222,25 @@ The protocol is build on top of the Reticulum `Request` and
 - [X] ~~Pip package with command-line utility support~~
 - [X] ~~Publish to PyPI~~
 - [X] ~~Improve signal handling~~
-- [ ] Protocol improvements (throughput!)
-- [ ] Test on several *nixes
 - [X] ~~Make it scriptable (currently requires a tty)~~
-- [ ] Documentation improvements
+- [X] ~~Protocol improvements (throughput!)~~
+- [X] ~~Documentation improvements~~
+- [ ] Test on several platforms
+- [ ] Fix issues that come up with testing
+- [ ] Fix issues with running `rnsh` in a binary pipeline, i.e. 
+  piping the output of `tar` over `rsh`.
+- [ ] Beta release
+- [ ] Test and fix more issues
+- [ ] V1.0
+- [ ] Enhancement Ideas
+  - [ ] `authorized_keys` mode similar to SSH
+  - [ ] Git over `rnsh` (git remote helper)
+  - [ ] Sliding window acknowledgements for improved throughput
+
+## Miscellaneous
+
+By piping into/out of `rnsh`, it should be possible to transfer
+files using the same method discussed in 
+[this article](https://cromwell-intl.com/open-source/tar-and-ssh.html).
+I tested it just now and it doesn't work right. There's probably some
+subtle garbling of the data at one end of the stream or the other.

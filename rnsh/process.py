@@ -96,6 +96,8 @@ def tty_read(fd: int) -> bytes:
                         if data is not None and len(data) > 0:
                             result.extend(data)
                             return result
+                        elif len(result) > 0:
+                            return result
                         else:
                             raise EOFError
                     if data is not None and len(data) > 0:
@@ -225,7 +227,7 @@ class TTYRestorer(contextlib.AbstractContextManager):
             return copy.deepcopy(termios.tcgetattr(self._fd))
         return None
 
-    def set_attr(self, attr: [any], when: int = termios.TCSANOW):
+    def set_attr(self, attr: [any], when: int = termios.TCSADRAIN):
         """
         Set termios attributes
         :param attr: attribute list to set
@@ -349,6 +351,7 @@ class CallbackSubprocess:
         self._pid: int = None
         self._child_fd: int = None
         self._return_code: int = None
+        self._eof: bool = False
 
     def terminate(self, kill_delay: float = 1.0):
         """
@@ -437,7 +440,7 @@ class CallbackSubprocess:
         return termios.tcgetattr(self._child_fd)
 
     def ttysetraw(self):
-        tty.setraw(self._child_fd, termios.TCSANOW)
+        tty.setraw(self._child_fd, termios.TCSADRAIN)
 
     def start(self):
         """
@@ -458,6 +461,8 @@ class CallbackSubprocess:
             env[key] = self._env[key]
 
         program = self._command[0]
+        assert isinstance(program, str)
+
         # match = re.search("^/bin/(.*sh)$", program)
         # if match:
         #     self._command[0] = "-" + match.group(1)
@@ -509,14 +514,23 @@ class CallbackSubprocess:
                     if data is not None and len(data) > 0:
                         callback(data)
             except EOFError:
+                self._eof = True
                 tty_unset_reader_callbacks(self._child_fd)
-                callback(CTRL_D)
+                callback(bytearray())
 
         tty_add_reader_callback(self._child_fd, functools.partial(reader, self._child_fd, self._stdout_cb), self._loop)
 
     @property
+    def eof(self):
+        return self._eof or not self.running
+
+    @property
     def return_code(self) -> int:
         return self._return_code
+
+    @property
+    def pid(self) -> int:
+        return self._pid
 
 
 async def main():
