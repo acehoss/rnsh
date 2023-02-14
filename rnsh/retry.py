@@ -64,10 +64,10 @@ class RetryStatus:
         self.completed = True
         self.timeout_callback(self.tag, self.tries)
 
-    def retry(self):
+    def retry(self) -> any:
         self.tries = self.tries + 1
         self.try_time = time.time()
-        self.retry_callback(self.tag, self.tries)
+        return self.retry_callback(self.tag, self.tries)
 
 
 class RetryThread(AbstractContextManager):
@@ -123,7 +123,9 @@ class RetryThread(AbstractContextManager):
                             prune.append(retry)
                         elif retry.ready:
                             self._log.debug(f"retrying {retry.tag}, try {retry.tries + 1}/{retry.try_limit}")
-                            retry.retry()
+                            should_continue = retry.retry()
+                            if not should_continue:
+                                self.complete(retry.tag)
                 except Exception as e:
                     self._log.error(f"error processing retry id {retry.tag}: {e}")
                     prune.append(retry)
@@ -145,10 +147,13 @@ class RetryThread(AbstractContextManager):
             return next(filter(lambda s: s.tag == tag, self._statuses), None) is not None
 
     def begin(self, try_limit: int, wait_delay: float, try_callback: Callable[[any, int], any],
-              timeout_callback: Callable[[any, int], None], tag: int = None) -> any:
+              timeout_callback: Callable[[any, int], None]) -> any:
         self._log.debug(f"running first try")
-        tag = try_callback(tag, 1)
+        tag = try_callback(None, 1)
         self._log.debug(f"first try got id {tag}")
+        if not tag:
+            self._log.debug(f"callback returned None/False/0, considering complete.")
+            return None
         with self._lock:
             if tag is None:
                 tag = self._get_next_tag()
@@ -160,6 +165,7 @@ class RetryThread(AbstractContextManager):
                                               retry_callback=try_callback,
                                               timeout_callback=timeout_callback))
         self._log.debug(f"added retry timer for {tag}")
+        return tag
 
     def complete(self, tag: any):
         assert tag is not None
