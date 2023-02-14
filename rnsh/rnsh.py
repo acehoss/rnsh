@@ -471,7 +471,7 @@ def _subproc_data_ready(link: RNS.Link, chars_available: int):
                     return
                 else:
                     if not timeout:
-                        log.info(
+                        log.debug(
                             f"Notifying client try {tries} (retcode: {session.return_code} " +
                             f"chars avail: {chars_available})")
                         packet = RNS.Packet(link, DATA_AVAIL_MSG.encode("utf-8"))
