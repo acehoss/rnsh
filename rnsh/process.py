@@ -477,7 +477,8 @@ class CallbackSubprocess:
                 for c in p.connections(kind='all'):
                     with exception.permit(SystemExit):
                         os.close(c.fd)
-                os.setpgrp()
+                # TODO: verify that skipping setpgrp fixes Operation not permitted on Manjaro
+                # os.setpgrp()
                 os.execvpe(program, self._command, env)
             except Exception as err:
                 print(f"Child process error: {err}, command: {self._command}")

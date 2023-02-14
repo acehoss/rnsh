@@ -17,6 +17,20 @@ out.
 
 Anyway, there's a lot of room for improvement.
 
+## New in v0.0.5
+### Remote command line and pipe compatibility
+Command line options have changed somewhat to allow the initiator
+to supply a command line. This allows `rnsh` to function similarly
+to SSH. You can pipe into or out of `rnsh` to send input through
+remote commands or remote command output through other commands.
+
+This behavior can be blocked on the listener with the `-C` option.
+
+When the initiator does not supply a command, the listener uses
+a default command specified on its command line. If a default
+command is not specified, the listener falls back to the shell
+of the user it is running under.
+
 ## Quickstart
 
 Tested (thus far) on Python 3.11 macOS 13.1 ARM64. Should
@@ -68,9 +82,10 @@ Usage:
     rnsh [--config <configdir>] [-i <identityfile>] [-s <service_name>] [-l] -p
     rnsh -l [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
          [-v... | -q...] [-b <period>] (-n | -a <identity_hash> [-a <identity_hash>] ...) 
-         [--] <program> [<arg> ...]
+         [-C] [[--] <program> [<arg> ...]]
     rnsh [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
-         [-v... | -q...] [-N] [-m] [-w <timeout>] <destination_hash>
+         [-v... | -q...] [-N] [-m] [-w <timeout>] <destination_hash> 
+         [[--] <program> [<arg> ...]]
     rnsh -h
     rnsh --version
 
@@ -79,12 +94,17 @@ Options:
     -i FILE --identity FILE  Specific identity file to use
     -s NAME --service NAME   Listen on/connect to specific service name if not default
     -p --print-identity      Print identity information and exit
-    -l --listen              Listen (server) mode
+    -l --listen              Listen (server) mode. If supplied, <program> <arg>...will 
+                               be used as the command line when the initiator does not
+                               provide one or when remote command is disabled. If
+                               <program> is not supplied, the default shell of the 
+                               user rnsh is running under will be used.
     -b --announce PERIOD     Announce on startup and every PERIOD seconds
                              Specify 0 for PERIOD to announce on startup only.
     -a HASH --allowed HASH   Specify identities allowed to connect
     -n --no-auth             Disable authentication
     -N --no-id               Disable identify on connect
+    -C --no-remote-command   Disable executing command line from remote
     -m --mirror              Client returns with code of remote process
     -w TIME --timeout TIME   Specify client connect and request timeout in seconds
     -q --quiet               Increase quietness (move level up), multiple increases effect

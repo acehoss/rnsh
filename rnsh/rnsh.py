@@ -30,6 +30,7 @@ import functools
 import importlib.metadata
 import logging as __logging
 import os
+import shlex
 import signal
 import sys
 import termios
@@ -45,6 +46,8 @@ import rnsh.rnslogging as rnslogging
 import rnsh.hacks as hacks
 import re
 import contextlib
+import rnsh.args
+import pwd
 
 module_logger = __logging.getLogger(__name__)
 
@@ -59,12 +62,13 @@ _identity = None
 _reticulum = None
 _allow_all = False
 _allowed_identity_hashes = []
-_cmd: [str] = None
+_cmd: [str] | None = None
 DATA_AVAIL_MSG = "data available"
 _finished: asyncio.Event = None
 _retry_timer: retry.RetryThread | None = None
 _destination: RNS.Destination | None = None
 _loop: asyncio.AbstractEventLoop | None = None
+_no_remote_command = True
 
 
 async def _check_finished(timeout: float = 0):
@@ -110,17 +114,29 @@ def _print_identity(configdir, identitypath, service_name, include_destination: 
     exit(0)
 
 
-async def _listen(configdir, command, identitypath=None, service_name="default", verbosity=0, quietness=0,
-                  allowed=None, disable_auth=None, announce_period=900):
-    global _identity, _allow_all, _allowed_identity_hashes, _reticulum, _cmd, _destination
+async def _listen(configdir, command, identitypath=None, service_name="default", verbosity=0, quietness=0, allowed=None,
+                  disable_auth=None, announce_period=900, no_remote_command=True):
+    global _identity, _allow_all, _allowed_identity_hashes, _reticulum, _cmd, _destination, _no_remote_command
     log = _get_logger("_listen")
-    _cmd = command
+
 
     targetloglevel = RNS.LOG_INFO + verbosity - quietness
     _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
     rnslogging.RnsHandler.set_log_level_with_rns_level(targetloglevel)
     _prepare_identity(identitypath)
     _destination = RNS.Destination(_identity, RNS.Destination.IN, RNS.Destination.SINGLE, APP_NAME, service_name)
+
+    _cmd = command
+    if _cmd is None or len(_cmd) == 0:
+        shell = pwd.getpwuid(os.getuid()).pw_shell
+        log.info(f"Using {shell} for default command.")
+        _cmd = [shell]
+    else:
+        log.info(f"Using command {shlex.join(_cmd)}")
+
+    _no_remote_command = no_remote_command
+    if _cmd is None and _no_remote_command:
+        raise Exception(f"Unable to look up shell for {os.getlogin}, cannot proceed with -C and no <program>.")
 
     if disable_auth:
         _allow_all = True
@@ -202,6 +218,7 @@ def _protocol_make_version(version: int):
 
 
 _PROTOCOL_VERSION_0 = _protocol_make_version(0)
+_PROTOCOL_VERSION_1 = _protocol_make_version(1)
 
 
 def _protocol_split_version(version: int):
@@ -252,6 +269,7 @@ class Session:
                                                    loop=loop,
                                                    stdout_callback=self._stdout_data,
                                                    terminated_callback=terminated_callback)
+        self._log.debug(f"Starting {cmd}")
         self._data_buffer = bytearray()
         self._lock = threading.RLock()
         self._data_available_cb = data_available_callback
@@ -335,13 +353,14 @@ class Session:
     REQUEST_IDX_COLS = 5
     REQUEST_IDX_HPIX = 6
     REQUEST_IDX_VPIX = 7
+    REQUEST_IDX_CMD = 8
 
     @staticmethod
     def default_request(stdin_fd: int | None) -> [any]:
         global _tr
-        global _PROTOCOL_VERSION_0
+        global _PROTOCOL_VERSION_1
         request: list[any] = [
-            _PROTOCOL_VERSION_0,  # 0 Protocol Version
+            _PROTOCOL_VERSION_1,  # 0 Protocol Version
             None,  # 1 Stdin
             None,  # 2 TERM variable
             None,  # 3 termios attributes or something
@@ -349,6 +368,7 @@ class Session:
             None,  # 5 terminal cols
             None,  # 6 terminal horizontal pixels
             None,  # 7 terminal vertical pixels
+            None,  # 8 Command to run
         ].copy()
 
         if stdin_fd is not None:
@@ -406,10 +426,9 @@ class Session:
     RESPONSE_IDX_TMSTAMP = 5
 
     @staticmethod
-    def default_response() -> [any]:
-        global _PROTOCOL_VERSION_0
+    def default_response(version: int = _PROTOCOL_VERSION_1) -> [any]:
         response: list[any] = [
-            _PROTOCOL_VERSION_0,  # 0: Protocol version
+            version,  # 0: Protocol version
             False,  # 1: Process running
             None,  # 2: Return value
             0,  # 3: Number of outstanding bytes
@@ -417,6 +436,14 @@ class Session:
             None,  # 5: Timestamp
         ].copy()
         response[Session.RESPONSE_IDX_TMSTAMP] = time.time()
+        return response
+
+    @classmethod
+    def error_response(cls, msg: str, version: int = _PROTOCOL_VERSION_1) -> [any]:
+        response = cls.default_response(version)
+        response[Session.RESPONSE_IDX_STDOUT] = base64.b64encode( f"{msg}\r\n".encode("utf-8"))
+        response[Session.RESPONSE_IDX_RETCODE] = 255
+        response[Session.RESPONSE_IDX_RDYBYTE] = 0
         return response
 
 
@@ -497,13 +524,12 @@ def _subproc_terminated(link: RNS.Link, return_code: int):
     _loop.call_soon_threadsafe(cleanup)
 
 
-def _listen_start_proc(link: RNS.Link, remote_identity: str | None, term: str,
+def _listen_start_proc(link: RNS.Link, remote_identity: str | None, term: str, cmd: str | None,
                        loop: asyncio.AbstractEventLoop) -> Session | None:
-    global _cmd
     log = _get_logger("_listen_start_proc")
     try:
         return Session(tag=link.link_id,
-                       cmd=_cmd,
+                       cmd=cmd,
                        term=term,
                        remote_identity=remote_identity,
                        mdu=link.MDU,
@@ -550,7 +576,7 @@ def _initiator_identified(link, identity):
 
 
 def _listen_request(path, data, request_id, link_id, remote_identity, requested_at):
-    global _destination, _retry_timer, _loop
+    global _destination, _retry_timer, _loop, _cmd, _no_remote_command
     log = _get_logger("_listen_request")
     log.debug(
         f"listen_execute {path} {RNS.prettyhexrep(request_id)} {RNS.prettyhexrep(link_id)} {remote_identity}, {requested_at}")
@@ -565,13 +591,19 @@ def _listen_request(path, data, request_id, link_id, remote_identity, requested_
     if not _protocol_check_magic(remote_version):
         raise Exception("Request magic incorrect")
 
-    if not remote_version == _PROTOCOL_VERSION_0:
-        response = Session.default_response()
-        response[Session.RESPONSE_IDX_STDOUT] = base64.b64encode(
-            "Listener<->initiator version mismatch\r\n".encode("utf-8"))
-        response[Session.RESPONSE_IDX_RETCODE] = 255
-        response[Session.RESPONSE_IDX_RDYBYTE] = 0
-        return response
+    if not remote_version == _PROTOCOL_VERSION_0 and not remote_version == _PROTOCOL_VERSION_1:
+        return Session.error_response("Listener<->initiator version mismatch")
+
+    cmd = _cmd
+    if remote_version == _PROTOCOL_VERSION_1:
+        remote_command = data[Session.REQUEST_IDX_CMD]
+        if remote_command is not None and len(remote_command) > 0:
+            if _no_remote_command:
+                return Session.error_response("Listener does not permit initiator to provide command.")
+            cmd = remote_command
+
+    if not _no_remote_command and (cmd is None or len(cmd) == 0):
+        return Session.error_response("No command supplied and no default command available.")
 
     session: Session | None = None
     try:
@@ -584,6 +616,7 @@ def _listen_request(path, data, request_id, link_id, remote_identity, requested_
             log.debug(f"Process not found for link {link}")
             session = _listen_start_proc(link=link,
                                          term=term,
+                                         cmd=cmd,
                                          remote_identity=RNS.hexrep(remote_identity.hash).replace(":", ""),
                                          loop=_loop)
 
@@ -641,7 +674,8 @@ def _response_handler(request_receipt: RNS.RequestReceipt):
 
 
 async def _execute(configdir, identitypath=None, verbosity=0, quietness=0, noid=False, destination=None,
-                   service_name="default", stdin=None, timeout=RNS.Transport.PATH_REQUEST_TIMEOUT):
+                   service_name="default", stdin=None, timeout=RNS.Transport.PATH_REQUEST_TIMEOUT,
+                   cmd: [str] | None = None):
     global _identity, _reticulum, _link, _destination, _remote_exec_grace, _tr, _new_data
     log = _get_logger("_execute")
 
@@ -699,6 +733,7 @@ async def _execute(configdir, identitypath=None, verbosity=0, quietness=0, noid=
     log.debug(f"Sending {len(stdin) or 0} bytes to listener")
     # log.debug(f"Sending {stdin} to listener")
     request[Session.REQUEST_IDX_STDIN] = (base64.b64encode(stdin) if stdin is not None else None)
+    request[Session.REQUEST_IDX_CMD] = cmd
 
     # TODO: Tune
     timeout = timeout + _link.rtt * 4 + _remote_exec_grace
@@ -741,7 +776,7 @@ async def _execute(configdir, identitypath=None, verbosity=0, quietness=0, noid=
             version = request_receipt.response[Session.RESPONSE_IDX_VERSION] or 0
             if not _protocol_check_magic(version):
                 raise RemoteExecutionError("Protocol error")
-            elif version != _PROTOCOL_VERSION_0:
+            elif version != _PROTOCOL_VERSION_0 and version != _PROTOCOL_VERSION_1:
                 raise RemoteExecutionError("Protocol version mismatch")
 
             running = request_receipt.response[Session.RESPONSE_IDX_RUNNING] or True
@@ -775,13 +810,18 @@ async def _execute(configdir, identitypath=None, verbosity=0, quietness=0, noid=
 
         return None
 
+_pre_input = bytearray()
+
 
 async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness: int, noid: bool, destination: str,
-                    service_name: str, timeout: float):
-    global _new_data, _finished, _tr
+                    service_name: str, timeout: float, command: [str] | None = None):
+    global _new_data, _finished, _tr, _cmd, _pre_input
     log = _get_logger("_initiate")
     loop = asyncio.get_running_loop()
     _new_data = asyncio.Event()
+    command = command
+    if command is not None and len(command) == 1:
+        command = shlex.split(command[0])
 
     data_buffer = bytearray(sys.stdin.buffer.read()) if not os.isatty(sys.stdin.fileno()) else bytearray()
 
@@ -827,6 +867,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
                 service_name=service_name,
                 stdin=stdin,
                 timeout=timeout,
+                cmd=command,
             )
 
             if first_loop:
@@ -854,17 +895,6 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
         await process.event_wait_any([_new_data, _finished], timeout=min(max(rtt * 50, 5), 120))
 
 
-_T = TypeVar("_T")
-
-
-def _split_array_at(arr: [_T], at: _T) -> ([_T], [_T]):
-    try:
-        idx = arr.index(at)
-        return arr[:idx], arr[idx + 1:]
-    except ValueError:
-        return arr, []
-
-
 def _loop_set_signal(sig, loop):
     loop.remove_signal_handler(sig)
     loop.add_signal_handler(sig, functools.partial(_sigint_handler, sig, None))
@@ -879,134 +909,58 @@ async def _rnsh_cli_main():
     _finished = asyncio.Event()
     _loop_set_signal(signal.SIGINT, _loop)
     _loop_set_signal(signal.SIGTERM, _loop)
-    usage = '''
-Usage:
-    rnsh [--config <configdir>] [-i <identityfile>] [-s <service_name>] [-l] -p
-    rnsh -l [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
-         [-v... | -q...] [-b <period>] (-n | -a <identity_hash> [-a <identity_hash>] ...) 
-         [--] <program> [<arg> ...]
-    rnsh [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
-         [-v... | -q...] [-N] [-m] [-w <timeout>] <destination_hash>
-    rnsh -h
-    rnsh --version
 
-Options:
-    --config DIR             Alternate Reticulum config directory to use
-    -i FILE --identity FILE  Specific identity file to use
-    -s NAME --service NAME   Listen on/connect to specific service name if not default
-    -p --print-identity      Print identity information and exit
-    -l --listen              Listen (server) mode
-    -b --announce PERIOD     Announce on startup and every PERIOD seconds
-                             Specify 0 for PERIOD to announce on startup only.
-    -a HASH --allowed HASH   Specify identities allowed to connect
-    -n --no-auth             Disable authentication
-    -N --no-id               Disable identify on connect
-    -m --mirror              Client returns with code of remote process
-    -w TIME --timeout TIME   Specify client connect and request timeout in seconds
-    -q --quiet               Increase quietness (move level up), multiple increases effect
-                                     DEFAULT LOGGING LEVEL
-                                              CRITICAL (silent)
-                                Initiator ->  ERROR
-                                              WARNING
-                                 Listener ->  INFO
-                                              DEBUG    (insane)
-    -v --verbose             Increase verbosity (move level down), multiple increases effect
-    --version                Show version
-    -h --help                Show this help
-    '''
+    args = rnsh.args.Args(sys.argv)
 
-    argv, program_args = _split_array_at(sys.argv, "--")
-    if len(program_args) > 0:
-        argv.append(program_args[0])
-        program_args = program_args[1:]
-
-    args = docopt.docopt(usage, argv=argv[1:], version=f"rnsh {importlib.metadata.version('rnsh')}")
-    # json.dump(args, sys.stdout)
-
-    args_service_name = args.get("--service", None) or "default"
-    args_listen = args.get("--listen", None) or False
-    args_identity = args.get("--identity", None)
-    args_config = args.get("--config", None)
-    args_print_identity = args.get("--print-identity", None) or False
-    args_verbose = args.get("--verbose", None) or 0
-    args_quiet = args.get("--quiet", None) or 0
-    args_announce = args.get("--announce", None)
-    try:
-        if args_announce:
-            args_announce = int(args_announce)
-    except ValueError:
-        print("Invalid value for --announce")
-        return 1
-    args_no_auth = args.get("--no-auth", None) or False
-    args_allowed = args.get("--allowed", None) or []
-    args_program = args.get("<program>", None)
-    args_program_args = args.get("<arg>", None) or []
-    args_program_args.insert(0, args_program)
-    args_program_args.extend(program_args)
-    args_no_id = args.get("--no-id", None) or False
-    args_mirror = args.get("--mirror", None) or False
-    args_timeout = args.get("--timeout", None) or RNS.Transport.PATH_REQUEST_TIMEOUT
-    args_destination = args.get("<destination_hash>", None)
-    args_help = args.get("--help", None) or False
-
-    if args_help:
+    if args.print_identity:
+        _print_identity(args.config, args.identity, args.service_name, args.listen)
         return 0
 
-    if args_print_identity:
-        _print_identity(args_config, args_identity, args_service_name, args_listen)
-        return 0
-
-    if args_listen:
+    if args.listen:
         # log.info("command " + args.command)
-        await _listen(
-            configdir=args_config,
-            command=args_program_args,
-            identitypath=args_identity,
-            service_name=args_service_name,
-            verbosity=args_verbose,
-            quietness=args_quiet,
-            allowed=args_allowed,
-            disable_auth=args_no_auth,
-            announce_period=args_announce,
-        )
+        await _listen(configdir=args.config,
+                      command=args.program_args,
+                      identitypath=args.identity,
+                      service_name=args.service_name,
+                      verbosity=args.verbose,
+                      quietness=args.quiet,
+                      allowed=args.allowed,
+                      disable_auth=args.no_auth,
+                      announce_period=args.announce,
+                      no_remote_command=args.no_remote_cmd)
+        return 0
 
-    if args_destination is not None and args_service_name is not None:
+    if args.destination is not None and args.service_name is not None:
         return_code = await _initiate(
-            configdir=args_config,
-            identitypath=args_identity,
-            verbosity=args_verbose,
-            quietness=args_quiet,
-            noid=args_no_id,
-            destination=args_destination,
-            service_name=args_service_name,
-            timeout=args_timeout,
+            configdir=args.config,
+            identitypath=args.identity,
+            verbosity=args.verbose,
+            quietness=args.quiet,
+            noid=args.no_id,
+            destination=args.destination,
+            service_name=args.service_name,
+            timeout=args.timeout,
+            command=args.program_args
         )
-        return return_code if args_mirror else 0
+        return return_code if args.mirror else 0
     else:
         print("")
-        print(args)
+        print(args.usage)
         print("")
-
-
-def _noop():
-    pass
-
-# RNS.exit = _noop
+        return 1
 
 
 def rnsh_cli():
-    global _tr, _retry_timer
+    global _tr, _retry_timer, _pre_input
     with contextlib.suppress(Exception):
         if not os.isatty(sys.stdin.fileno()):
+            time.sleep(0.1)  # attempting to deal with an issue with missing input
             tty.setraw(sys.stdin.fileno(), termios.TCSANOW)
+
     with process.TTYRestorer(sys.stdin.fileno()) as _tr, retry.RetryThread() as _retry_timer:
         return_code = asyncio.run(_rnsh_cli_main())
 
-    with exception.permit(SystemExit):
-        process.tty_unset_reader_callbacks(sys.stdin.fileno())
-
-    # RNS.Reticulum.exit_handler()
-    # time.sleep(0.5)
+    process.tty_unset_reader_callbacks(sys.stdin.fileno())
     sys.exit(return_code if return_code is not None else 255)
 
 
