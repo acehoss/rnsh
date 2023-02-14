@@ -17,8 +17,18 @@ out.
 
 Anyway, there's a lot of room for improvement.
 
-## New in v0.0.5
-### Remote command line and pipe compatibility
+## Alpha Software
+These early versions will be buggy. There will sometimes be major
+breaking changes to the command line parameters between releases.
+There will sometimes be breaking changes in the protocol between
+releases. Use at your own peril!
+
+## Recent Changes
+### v0.0.6
+Minor improvements in transport efficiency
+
+### v0.0.5
+#### Remote command line and pipe compatibility
 Command line options have changed somewhat to allow the initiator
 to supply a command line. This allows `rnsh` to function similarly
 to SSH. You can pipe into or out of `rnsh` to send input through
