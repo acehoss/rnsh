@@ -69,6 +69,7 @@ _retry_timer: retry.RetryThread | None = None
 _destination: RNS.Destination | None = None
 _loop: asyncio.AbstractEventLoop | None = None
 _no_remote_command = True
+_remote_cmd_as_args = False
 
 
 async def _check_finished(timeout: float = 0):
@@ -115,8 +116,9 @@ def _print_identity(configdir, identitypath, service_name, include_destination: 
 
 
 async def _listen(configdir, command, identitypath=None, service_name="default", verbosity=0, quietness=0, allowed=None,
-                  disable_auth=None, announce_period=900, no_remote_command=True):
+                  disable_auth=None, announce_period=900, no_remote_command=True, remote_cmd_as_args=False):
     global _identity, _allow_all, _allowed_identity_hashes, _reticulum, _cmd, _destination, _no_remote_command
+    global _remote_cmd_as_args
     log = _get_logger("_listen")
 
 
@@ -128,15 +130,21 @@ async def _listen(configdir, command, identitypath=None, service_name="default",
 
     _cmd = command
     if _cmd is None or len(_cmd) == 0:
-        shell = pwd.getpwuid(os.getuid()).pw_shell
+        shell = None
+        try:
+            shell = pwd.getpwuid(os.getuid()).pw_shell
+        except Exception as e:
+            log.error(f"Error looking up shell: {e}")
         log.info(f"Using {shell} for default command.")
-        _cmd = [shell]
+        _cmd = [shell] if shell else None
     else:
         log.info(f"Using command {shlex.join(_cmd)}")
 
     _no_remote_command = no_remote_command
-    if _cmd is None and _no_remote_command:
-        raise Exception(f"Unable to look up shell for {os.getlogin}, cannot proceed with -C and no <program>.")
+    _remote_cmd_as_args = remote_cmd_as_args
+    if (_cmd is None or len(_cmd) == 0 or _cmd[0] is None or len(_cmd[0]) == 0) \
+            and (_no_remote_command or _remote_cmd_as_args):
+        raise Exception(f"Unable to look up shell for {os.getlogin}, cannot proceed with -A or -C and no <program>.")
 
     if disable_auth:
         _allow_all = True
@@ -603,13 +611,16 @@ def _listen_request(path, data, request_id, link_id, remote_identity, requested_
     if not remote_version <= _PROTOCOL_VERSION_DEFAULT:
         return Session.error_response("Listener<->initiator version mismatch")
 
-    cmd = _cmd
+    cmd = _cmd.copy()
     if remote_version >= _PROTOCOL_VERSION_1:
         remote_command = data[Session.REQUEST_IDX_CMD]
         if remote_command is not None and len(remote_command) > 0:
             if _no_remote_command:
                 return Session.error_response("Listener does not permit initiator to provide command.")
-            cmd = remote_command
+            elif _remote_cmd_as_args:
+                cmd.extend(remote_command)
+            else:
+                cmd = remote_command
 
     if not _no_remote_command and (cmd is None or len(cmd) == 0):
         return Session.error_response("No command supplied and no default command available.")
@@ -939,7 +950,8 @@ async def _rnsh_cli_main():
                       allowed=args.allowed,
                       disable_auth=args.no_auth,
                       announce_period=args.announce,
-                      no_remote_command=args.no_remote_cmd)
+                      no_remote_command=args.no_remote_cmd,
+                      remote_cmd_as_args=args.remote_cmd_as_args)
         return 0
 
     if args.destination is not None and args.service_name is not None:

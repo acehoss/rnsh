@@ -21,7 +21,7 @@ Usage:
     rnsh [--config <configdir>] [-i <identityfile>] [-s <service_name>] [-l] -p
     rnsh -l [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
          [-v... | -q...] [-b <period>] (-n | -a <identity_hash> [-a <identity_hash>] ...) 
-         [-C] [[--] <program> [<arg> ...]]
+         [-A | -C] [[--] <program> [<arg> ...]]
     rnsh [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
          [-v... | -q...] [-N] [-m] [-w <timeout>] <destination_hash> 
          [[--] <program> [<arg> ...]]
@@ -29,33 +29,34 @@ Usage:
     rnsh --version
 
 Options:
-    --config DIR             Alternate Reticulum config directory to use
-    -i FILE --identity FILE  Specific identity file to use
-    -s NAME --service NAME   Listen on/connect to specific service name if not default
-    -p --print-identity      Print identity information and exit
-    -l --listen              Listen (server) mode. If supplied, <program> <arg>...will 
-                               be used as the command line when the initiator does not
-                               provide one or when remote command is disabled. If
-                               <program> is not supplied, the default shell of the 
-                               user rnsh is running under will be used.
-    -b --announce PERIOD     Announce on startup and every PERIOD seconds
-                             Specify 0 for PERIOD to announce on startup only.
-    -a HASH --allowed HASH   Specify identities allowed to connect
-    -n --no-auth             Disable authentication
-    -N --no-id               Disable identify on connect
-    -C --no-remote-command   Disable executing command line from remote
-    -m --mirror              Client returns with code of remote process
-    -w TIME --timeout TIME   Specify client connect and request timeout in seconds
-    -q --quiet               Increase quietness (move level up), multiple increases effect
-                                     DEFAULT LOGGING LEVEL
-                                              CRITICAL (silent)
-                                Initiator ->  ERROR
-                                              WARNING
-                                 Listener ->  INFO
-                                              DEBUG    (insane)
-    -v --verbose             Increase verbosity (move level down), multiple increases effect
-    --version                Show version
-    -h --help                Show this help
+    --config DIR                 Alternate Reticulum config directory to use
+    -i FILE --identity FILE      Specific identity file to use
+    -s NAME --service NAME       Listen on/connect to specific service name if not default
+    -p --print-identity          Print identity information and exit
+    -l --listen                  Listen (server) mode. If supplied, <program> <arg>...will 
+                                   be used as the command line when the initiator does not
+                                   provide one or when remote command is disabled. If
+                                   <program> is not supplied, the default shell of the 
+                                   user rnsh is running under will be used.
+    -b --announce PERIOD         Announce on startup and every PERIOD seconds
+                                 Specify 0 for PERIOD to announce on startup only.
+    -a HASH --allowed HASH       Specify identities allowed to connect
+    -n --no-auth                 Disable authentication
+    -N --no-id                   Disable identify on connect
+    -A --remote-command-as-args  Concatenate remote command to argument list of <program>/shell
+    -C --no-remote-command       Disable executing command line from remote
+    -m --mirror                  Client returns with code of remote process
+    -w TIME --timeout TIME       Specify client connect and request timeout in seconds
+    -q --quiet                   Increase quietness (move level up), multiple increases effect
+                                          DEFAULT LOGGING LEVEL
+                                                  CRITICAL (silent)
+                                    Initiator ->  ERROR
+                                                  WARNING
+                                     Listener ->  INFO
+                                                  DEBUG    (insane)
+    -v --verbose                 Increase verbosity (move level down), multiple increases effect
+    --version                    Show version
+    -h --help                    Show this help
 '''
 
 
@@ -64,7 +65,8 @@ class Args:
         global usage
         try:
             argv, program_args = _split_array_at(argv, "--")
-            if len(program_args) > 0:
+            # need to add first arg after -- back onto argv for docopts, but only for listener
+            if len(program_args) > 0 and next(filter(lambda a: a == "-l" or a == "--listen", argv), None) is not None:
                 argv.append(program_args[0])
                 self.program_args = program_args[1:]
     
@@ -88,6 +90,7 @@ class Args:
                 self.valid = False
             self.no_auth = args.get("--no-auth", None) or False
             self.allowed = args.get("--allowed", None) or []
+            self.remote_cmd_as_args = args.get("--remote-command-as-args", None) or False
             self.no_remote_cmd = args.get("--no-remote-command", None) or False
             self.program = args.get("<program>", None)
             self.program_args = args.get("<arg>", None) or []
