@@ -37,7 +37,11 @@ class SubprocessReader(contextlib.AbstractContextManager):
                                                        env=self.env,
                                                        loop=self.loop,
                                                        stdout_callback=self._stdout_cb,
-                                                       terminated_callback=self._terminated_cb)
+                                                       terminated_callback=self._terminated_cb,
+                                                       stderr_callback=self._stdout_cb,
+                                                       stdin_is_pipe=False,
+                                                       stdout_is_pipe=False,
+                                                       stderr_is_pipe=False)
 
     def _stdout_cb(self, data):
         self._log.debug(f"_stdout_cb({data})")

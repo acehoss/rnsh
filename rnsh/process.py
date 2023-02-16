@@ -323,12 +323,75 @@ async def event_wait(evt: asyncio.Event, timeout: float) -> bool:
     return evt.is_set()
 
 
+def _launch_child(cmd_line: list[str], env: dict[str, str], stdin_is_pipe: bool, stdout_is_pipe: bool,
+                  stderr_is_pipe: bool) -> tuple[int, int, int, int]:
+    # Set up PTY and/or pipes
+    child_fd = parent_fd = None
+    if not (stdin_is_pipe and stdout_is_pipe and stderr_is_pipe):
+        parent_fd, child_fd = pty.openpty()
+    child_stdin, parent_stdin = (os.pipe() if stdin_is_pipe else (child_fd, parent_fd))
+    parent_stdout, child_stdout = (os.pipe() if stdout_is_pipe else (parent_fd, child_fd))
+    parent_stderr, child_stderr = (os.pipe() if stderr_is_pipe else (parent_fd, child_fd))
+
+    # Fork
+    pid = os.fork()
+
+    if pid == 0:
+        try:
+            # We are in the child process, so close all open sockets and pipes except for the PTY and/or pipes
+            max_fd = os.sysconf("SC_OPEN_MAX")
+            for fd in range(3, max_fd):
+                if fd not in (child_stdin, child_stdout, child_stderr):
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+
+            # Set up PTY and/or pipes
+            os.dup2(child_stdin, 0)
+            os.dup2(child_stdout, 1)
+            os.dup2(child_stderr, 2)
+            # Make PTY controlling if necessary
+            if not stdin_is_pipe:
+                os.setsid()
+                tmp_fd = os.open(os.ttyname(0), os.O_RDWR)
+                os.close(tmp_fd)
+                # fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+            # Execute the command
+            os.execvpe(cmd_line[0], cmd_line, env)
+        except Exception as err:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(f"Unable to start {cmd_line[0]}: {err} ({fname}:{exc_tb.tb_lineno})")
+            sys.stdout.flush()
+        # don't let any other modules get in our way, do an immediate silent exit.
+        os._exit(0)
+
+    else:
+        # We are in the parent process, so close the child-side of the PTY and/or pipes
+        if child_fd is not None:
+            os.close(child_fd)
+        if child_stdin != child_fd:
+            os.close(child_stdin)
+        if child_stdout != child_fd:
+            os.close(child_stdout)
+        if child_stderr != child_fd:
+            os.close(child_stderr)
+        # # Close the write end of the pipe if a pipe is used for standard input
+        # if not stdin_is_pipe:
+        #     os.close(parent_stdin)
+        # Return the child PID and the file descriptors for the PTY and/or pipes
+        return pid, parent_stdin, parent_stdout, parent_stderr
+
+
 class CallbackSubprocess:
     # time between checks of child process
     PROCESS_POLL_TIME: float = 0.1
 
     def __init__(self, argv: [str], env: dict, loop: asyncio.AbstractEventLoop, stdout_callback: callable,
-                 terminated_callback: callable):
+                 stderr_callback: callable, terminated_callback: callable, stdin_is_pipe: bool, stdout_is_pipe: bool,
+                 stderr_is_pipe: bool):
         """
         Fork a child process and generate callbacks with output from the process.
         :param argv: the command line, tokenized. The first element must be the absolute path to an executable file.
@@ -347,11 +410,17 @@ class CallbackSubprocess:
         self._env = env or {}
         self._loop = loop
         self._stdout_cb = stdout_callback
+        self._stderr_cb = stderr_callback
         self._terminated_cb = terminated_callback
         self._pid: int = None
-        self._child_fd: int = None
+        self._child_stdin: int = None
+        self._child_stdout: int = None
+        self._child_stderr: int = None
         self._return_code: int = None
         self._eof: bool = False
+        self._stdin_is_pipe = stdin_is_pipe
+        self._stdout_is_pipe = stdout_is_pipe
+        self._stderr_is_pipe = stderr_is_pipe
 
     def terminate(self, kill_delay: float = 1.0):
         """
@@ -382,6 +451,10 @@ class CallbackSubprocess:
 
         threading.Thread(target=wait).start()
 
+    def close_stdin(self):
+        with contextlib.suppress(Exception):
+            os.close(self._child_stdin)
+
     @property
     def started(self) -> bool:
         """
@@ -402,7 +475,7 @@ class CallbackSubprocess:
         :param data: bytes to write
         """
         self._log.debug(f"write({data})")
-        os.write(self._child_fd, data)
+        os.write(self._child_stdin, data)
 
     def set_winsize(self, r: int, c: int, h: int, v: int):
         """
@@ -414,7 +487,7 @@ class CallbackSubprocess:
         :return:
         """
         self._log.debug(f"set_winsize({r},{c},{h},{v}")
-        tty_set_winsize(self._child_fd, r, c, h, v)
+        tty_set_winsize(self._child_stdout, r, c, h, v)
 
     def copy_winsize(self, fromfd: int):
         """
@@ -430,17 +503,17 @@ class CallbackSubprocess:
         :param when: when to apply change: termios.TCSANOW or termios.TCSADRAIN or termios.TCSAFLUSH
         :param attr: attributes to set
         """
-        termios.tcsetattr(self._child_fd, when, attr)
+        termios.tcsetattr(self._child_stdin, when, attr)
 
     def tcgetattr(self) -> list[any]:  # actual type is list[int | list[int | bytes]]
         """
         Get tty attributes.
         :return: tty attributes value
         """
-        return termios.tcgetattr(self._child_fd)
+        return termios.tcgetattr(self._child_stdout)
 
     def ttysetraw(self):
-        tty.setraw(self._child_fd, termios.TCSADRAIN)
+        tty.setraw(self._child_stdout, termios.TCSADRAIN)
 
     def start(self):
         """
@@ -469,27 +542,11 @@ class CallbackSubprocess:
         #     env["SHELL"] = program
         #     self._log.debug(f"set login shell {self._command}")
 
-        self._pid, self._child_fd = pty.fork()
-
-        if self._pid == 0:
-            try:
-                # This may not be strictly necessary, but there is
-                # occasionally some funny business that goes on with
-                # networking after the fork. Anecdotally this fixed
-                # it, but more testing is needed as it might be a
-                # coincidence.
-                p = psutil.Process()
-                for c in p.connections(kind='all'):
-                    with exception.permit(SystemExit):
-                        os.close(c.fd)
-                # TODO: verify that skipping setpgrp fixes Operation not permitted on Manjaro
-                # os.setpgrp()
-                os.execvpe(program, self._command, env)
-            except Exception as err:
-                print(f"Child process error: {err}, command: {self._command}")
-                sys.stdout.flush()
-            # don't let any other modules get in our way.
-            os._exit(0)
+        self._pid, \
+            self._child_stdin, \
+            self._child_stdout, \
+            self._child_stderr = _launch_child(self._command, env, self._stdin_is_pipe, self._stdout_is_pipe,
+                                               self._stderr_is_pipe)
 
         def poll():
             # self.log.debug("poll")
@@ -515,10 +572,14 @@ class CallbackSubprocess:
                         callback(data)
             except EOFError:
                 self._eof = True
-                tty_unset_reader_callbacks(self._child_fd)
+                tty_unset_reader_callbacks(self._child_stdout)
                 callback(bytearray())
 
-        tty_add_reader_callback(self._child_fd, functools.partial(reader, self._child_fd, self._stdout_cb), self._loop)
+        tty_add_reader_callback(self._child_stdout, functools.partial(reader, self._child_stdout, self._stdout_cb),
+                                self._loop)
+        if self._child_stderr != self._child_stdout:
+            tty_add_reader_callback(self._child_stderr, functools.partial(reader, self._child_stderr, self._stderr_cb),
+                                self._loop)
 
     @property
     def eof(self):
