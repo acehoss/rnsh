@@ -38,7 +38,6 @@ import threading
 import tty
 import types
 import typing
-import psutil
 
 import rnsh.exception as exception
 
