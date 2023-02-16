@@ -23,7 +23,8 @@ module_dir = os.path.dirname(module_abs_filename)
 
 
 class SubprocessReader(contextlib.AbstractContextManager):
-    def __init__(self, argv: [str], env: dict = None, name: str = None):
+    def __init__(self, argv: [str], env: dict = None, name: str = None, stdin_is_pipe: bool = False,
+                 stdout_is_pipe: bool = False, stderr_is_pipe: bool = False):
         self._log = module_logger.getChild(self.__class__.__name__ + ("" if name is None else f"({name})"))
         self.name = name or "subproc"
         self.process: rnsh.process.CallbackSubprocess
@@ -32,16 +33,17 @@ class SubprocessReader(contextlib.AbstractContextManager):
         self.argv = argv
         self._lock = threading.RLock()
         self._stdout = bytearray()
+        self._stderr = bytearray()
         self.return_code: int = None
         self.process = rnsh.process.CallbackSubprocess(argv=self.argv,
                                                        env=self.env,
                                                        loop=self.loop,
                                                        stdout_callback=self._stdout_cb,
                                                        terminated_callback=self._terminated_cb,
-                                                       stderr_callback=self._stdout_cb,
-                                                       stdin_is_pipe=False,
-                                                       stdout_is_pipe=False,
-                                                       stderr_is_pipe=False)
+                                                       stderr_callback=self._stderr_cb,
+                                                       stdin_is_pipe=stdin_is_pipe,
+                                                       stdout_is_pipe=stdout_is_pipe,
+                                                       stderr_is_pipe=stderr_is_pipe)
 
     def _stdout_cb(self, data):
         self._log.debug(f"_stdout_cb({data})")
@@ -54,6 +56,19 @@ class SubprocessReader(contextlib.AbstractContextManager):
             data = self._stdout.copy()
             self._stdout.clear()
         self._log.debug(f"read() returns {data}")
+        return data
+
+    def _stderr_cb(self, data):
+        self._log.debug(f"_stderr_cb({data})")
+        with self._lock:
+            self._stderr.extend(data)
+
+    def read_err(self):
+        self._log.debug(f"read_err()")
+        with self._lock:
+            data = self._stderr.copy()
+            self._stderr.clear()
+        self._log.debug(f"read_err() returns {data}")
         return data
 
     def _terminated_cb(self, rc):

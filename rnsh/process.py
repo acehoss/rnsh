@@ -351,11 +351,11 @@ def _launch_child(cmd_line: list[str], env: dict[str, str], stdin_is_pipe: bool,
             os.dup2(child_stdout, 1)
             os.dup2(child_stderr, 2)
             # Make PTY controlling if necessary
-            if not stdin_is_pipe:
+            if child_fd is not None:
                 os.setsid()
-                tmp_fd = os.open(os.ttyname(0), os.O_RDWR)
+                tmp_fd = os.open(os.ttyname(0 if not stdin_is_pipe else 1 if not stdout_is_pipe else 2), os.O_RDWR)
                 os.close(tmp_fd)
-                # fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+                # fcntl.ioctl(0 if not stdin_is_pipe else 1 if not stdout_is_pipe else 2), os.O_RDWR, termios.TIOCSCTTY, 0)
 
             # Execute the command
             os.execvpe(cmd_line[0], cmd_line, env)
@@ -365,7 +365,7 @@ def _launch_child(cmd_line: list[str], env: dict[str, str], stdin_is_pipe: bool,
             print(f"Unable to start {cmd_line[0]}: {err} ({fname}:{exc_tb.tb_lineno})")
             sys.stdout.flush()
         # don't let any other modules get in our way, do an immediate silent exit.
-        os._exit(0)
+        os._exit(255)
 
     else:
         # We are in the parent process, so close the child-side of the PTY and/or pipes

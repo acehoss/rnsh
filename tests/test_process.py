@@ -51,6 +51,125 @@ async def test_echo_live():
         assert decoded == message
         assert not state.process.running
 
+
+@pytest.mark.skip_ci
+@pytest.mark.asyncio
+async def test_echo_live_pipe_in():
+    """
+    Check for immediate echo
+    """
+    with tests.helpers.SubprocessReader(argv=["/bin/cat"], stdin_is_pipe=True) as state:
+        state.start()
+        assert state.process is not None
+        assert state.process.running
+        message = "t"
+        state.process.write(message.encode("utf-8"))
+        await asyncio.sleep(0.1)
+        data = state.read()
+        state.process.close_stdin()
+        await asyncio.sleep(0.1)
+        assert len(data) > 0
+        decoded = data.decode("utf-8")
+        assert decoded == message
+        assert not state.process.running
+
+
+@pytest.mark.skip_ci
+@pytest.mark.asyncio
+async def test_echo_live_pipe_out():
+    """
+    Check for immediate echo
+    """
+    with tests.helpers.SubprocessReader(argv=["/bin/cat"], stdout_is_pipe=True) as state:
+        state.start()
+        assert state.process is not None
+        assert state.process.running
+        message = "t"
+        state.process.write(message.encode("utf-8"))
+        state.process.write(rnsh.process.CTRL_D)
+        await asyncio.sleep(0.1)
+        data = state.read()
+        assert len(data) > 0
+        decoded = data.decode("utf-8")
+        assert decoded == message
+        data = state.read_err()
+        assert len(data) > 0
+        state.process.close_stdin()
+        await asyncio.sleep(0.1)
+        assert not state.process.running
+
+
+@pytest.mark.skip_ci
+@pytest.mark.asyncio
+async def test_echo_live_pipe_err():
+    """
+    Check for immediate echo
+    """
+    with tests.helpers.SubprocessReader(argv=["/bin/cat"], stderr_is_pipe=True) as state:
+        state.start()
+        assert state.process is not None
+        assert state.process.running
+        message = "t"
+        state.process.write(message.encode("utf-8"))
+        await asyncio.sleep(0.1)
+        data = state.read()
+        state.process.write(rnsh.process.CTRL_C)
+        await asyncio.sleep(0.1)
+        assert len(data) > 0
+        decoded = data.decode("utf-8")
+        assert decoded == message
+        assert not state.process.running
+
+
+@pytest.mark.skip_ci
+@pytest.mark.asyncio
+async def test_echo_live_pipe_out_err():
+    """
+    Check for immediate echo
+    """
+    with tests.helpers.SubprocessReader(argv=["/bin/cat"], stdout_is_pipe=True, stderr_is_pipe=True) as state:
+        state.start()
+        assert state.process is not None
+        assert state.process.running
+        message = "t"
+        state.process.write(message.encode("utf-8"))
+        state.process.write(rnsh.process.CTRL_D)
+        await asyncio.sleep(0.1)
+        data = state.read()
+        assert len(data) > 0
+        decoded = data.decode("utf-8")
+        assert decoded == message
+        data = state.read_err()
+        assert len(data) == 0
+        state.process.close_stdin()
+        await asyncio.sleep(0.1)
+        assert not state.process.running
+
+
+
+@pytest.mark.skip_ci
+@pytest.mark.asyncio
+async def test_echo_live_pipe_all():
+    """
+    Check for immediate echo
+    """
+    with tests.helpers.SubprocessReader(argv=["/bin/cat"], stdout_is_pipe=True, stderr_is_pipe=True,
+                                        stdin_is_pipe=True) as state:
+        state.start()
+        assert state.process is not None
+        assert state.process.running
+        message = "t"
+        state.process.write(message.encode("utf-8"))
+        await asyncio.sleep(0.1)
+        data = state.read()
+        state.process.close_stdin()
+        await asyncio.sleep(0.1)
+        assert len(data) > 0
+        decoded = data.decode("utf-8")
+        assert decoded == message
+        assert not state.process.running
+
+
 @pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_double_echo_live():
