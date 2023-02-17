@@ -108,6 +108,35 @@ def tty_read(fd: int) -> bytes:
         module_logger.error("tty_read error: {ex}")
 
 
+def tty_read_poll(fd: int) -> bytes:
+    """
+    Read available bytes from a tty file descriptor. When used in a callback added to a file descriptor using
+    tty_add_reader_callback(...), this function creates a solution for non-blocking reads from ttys.
+    :param fd: tty file descriptor
+    :return: bytes read
+    """
+    if fd_is_closed(fd):
+        raise EOFError
+
+    result = bytearray()
+    try:
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        try:
+            data = os.read(fd, 4096)
+            result.extend(data or [])
+        except OSError as e:
+            if e.errno != errno.EIO and e.errno != errno.EWOULDBLOCK:
+                raise
+            elif e.errno == errno.EIO:
+                raise EOFError
+    except EOFError:
+        raise
+    except Exception as ex:
+        module_logger.error("tty_read error: {ex}")
+    return result
+
+
 def fd_is_closed(fd: int) -> bool:
     """
     Check if file descriptor is closed
