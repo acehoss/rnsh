@@ -26,7 +26,7 @@ import sys
 import termios
 import rnsh.process as process
 from logging import Handler, getLevelName
-from types import GenericAlias
+# from types import GenericAlias
 from typing import Any
 
 import RNS
@@ -101,7 +101,7 @@ class RnsHandler(Handler):
         level = getLevelName(self.level)
         return '<%s (%s)>' % (self.__class__.__name__, level)
 
-    __class_getitem__ = classmethod(GenericAlias)
+    # __class_getitem__ = classmethod(GenericAlias)
 
 
 log_format = '%(name)-30s %(message)s [%(threadName)s]'
