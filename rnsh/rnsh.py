@@ -26,10 +26,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import enum
 import functools
 import importlib.metadata
 import logging as __logging
 import os
+import queue
 import shlex
 import signal
 import sys
@@ -44,10 +46,12 @@ import rnsh.process as process
 import rnsh.retry as retry
 import rnsh.rnslogging as rnslogging
 import rnsh.hacks as hacks
+import rnsh.session as session
 import re
 import contextlib
 import rnsh.args
 import pwd
+import rnsh.protocol as protocol
 
 module_logger = __logging.getLogger(__name__)
 
@@ -141,13 +145,18 @@ async def _listen(configdir, command, identitypath=None, service_name="default",
         log.info(f"Using command {shlex.join(_cmd)}")
 
     _no_remote_command = no_remote_command
+    session.ListenerSession.allow_remote_command = not no_remote_command
     _remote_cmd_as_args = remote_cmd_as_args
     if (_cmd is None or len(_cmd) == 0 or _cmd[0] is None or len(_cmd[0]) == 0) \
             and (_no_remote_command or _remote_cmd_as_args):
         raise Exception(f"Unable to look up shell for {os.getlogin}, cannot proceed with -A or -C and no <program>.")
 
+    session.ListenerSession.default_command = _cmd
+    session.ListenerSession.remote_cmd_as_args = _remote_cmd_as_args
+
     if disable_auth:
         _allow_all = True
+        session.ListenerSession.allow_all = True
     else:
         if allowed is not None:
             for a in allowed:
@@ -161,6 +170,7 @@ async def _listen(configdir, command, identitypath=None, service_name="default",
                     try:
                         destination_hash = bytes.fromhex(a)
                         _allowed_identity_hashes.append(destination_hash)
+                        session.ListenerSession.allowed_identity_hashes.append(destination_hash)
                     except Exception:
                         raise ValueError("Invalid destination entered. Check your input.")
                 except Exception as e:
@@ -170,23 +180,9 @@ async def _listen(configdir, command, identitypath=None, service_name="default",
     if len(_allowed_identity_hashes) < 1 and not disable_auth:
         log.warning("Warning: No allowed identities configured, rnsh will not accept any connections!")
 
-    _destination.set_link_established_callback(_listen_link_established)
-
-    if not _allow_all:
-        _destination.register_request_handler(
-            path="data",
-            response_generator=hacks.request_request_id_hack(_listen_request, asyncio.get_running_loop()),
-            # response_generator=_listen_request,
-            allow=RNS.Destination.ALLOW_LIST,
-            allowed_list=_allowed_identity_hashes
-        )
-    else:
-        _destination.register_request_handler(
-            path="data",
-            response_generator=hacks.request_request_id_hack(_listen_request, asyncio.get_running_loop()),
-            # response_generator=_listen_request,
-            allow=RNS.Destination.ALLOW_ALL,
-        )
+    def link_established(lnk: RNS.Link):
+        session.ListenerSession(session.RNSOutlet.get_outlet(lnk), _loop)
+    _destination.set_link_established_callback(link_established)
 
     if await _check_finished():
         return
@@ -199,531 +195,22 @@ async def _listen(configdir, command, identitypath=None, service_name="default",
     last = time.time()
 
     try:
-        while not await _check_finished(1.0):
+        while not await _check_finished():
             if announce_period and 0 < announce_period < time.time() - last:
                 last = time.time()
                 _destination.announce()
+            await session.ListenerSession.pump_all()
+            await asyncio.sleep(0.01)
     finally:
         log.warning("Shutting down")
-        for link in list(_destination.links):
-            with exception.permit(SystemExit, KeyboardInterrupt):
-                proc = Session.get_for_tag(link.link_id)
-                if proc is not None and proc.process.running:
-                    proc.process.terminate()
-        await asyncio.sleep(0)
+        await session.ListenerSession.terminate_all("Shutting down")
+        await asyncio.sleep(1)
+        session.ListenerSession.messenger.shutdown()
         links_still_active = list(filter(lambda l: l.status != RNS.Link.CLOSED, _destination.links))
         for link in links_still_active:
-            if link.status != RNS.Link.CLOSED:
+            if link.status not in [RNS.Link.CLOSED]:
                 link.teardown()
-                await asyncio.sleep(0)
-
-
-_PROTOCOL_MAGIC = 0xdeadbeef
-
-
-def _protocol_make_version(version: int):
-    return (_PROTOCOL_MAGIC << 32) & 0xffffffff00000000 | (0xffffffff & version)
-
-
-_PROTOCOL_VERSION_0 = _protocol_make_version(0)
-_PROTOCOL_VERSION_1 = _protocol_make_version(1)
-_PROTOCOL_VERSION_2 = _protocol_make_version(2)
-_PROTOCOL_VERSION_3 = _protocol_make_version(3)
-
-_PROTOCOL_VERSION_DEFAULT = _PROTOCOL_VERSION_3
-
-def _protocol_split_version(version: int):
-    return (version >> 32) & 0xffffffff, version & 0xffffffff
-
-
-def _protocol_check_magic(value: int):
-    return _protocol_split_version(value)[0] == _PROTOCOL_MAGIC
-
-
-def _protocol_response_chars_take(link_mdu: int, version: int) -> int:
-    if version >= _PROTOCOL_VERSION_2:
-        return link_mdu - 64  # TODO: tune
-    else:
-        return link_mdu // 2
-
-
-def _protocol_request_chars_take(link_mdu: int, version: int, term: str, cmd: str) -> int:
-    if version >= _PROTOCOL_VERSION_2:
-        return link_mdu - 15 * 8 - len(term) - len(cmd) - 20  # TODO: tune
-    else:
-        return link_mdu // 2
-
-
-def _bitwise_or_if(value: int, condition: bool, orval: int):
-    if not condition:
-        return value
-    return value | orval
-
-
-def _check_and(value: int, andval: int) -> bool:
-    return (value & andval) > 0
-
-
-class Session:
-    _processes: [(any, Session)] = []
-    _lock = threading.RLock()
-
-    @classmethod
-    def get_for_tag(cls, tag: any) -> Session | None:
-        with cls._lock:
-            return next(map(lambda p: p[1], filter(lambda p: p[0] == tag, cls._processes)), None)
-
-    @classmethod
-    def put_for_tag(cls, tag: any, ps: Session):
-        with cls._lock:
-            cls.clear_tag(tag)
-            cls._processes.append((tag, ps))
-
-    @classmethod
-    def clear_tag(cls, tag: any):
-        with cls._lock:
-            with exception.permit(SystemExit):
-                cls._processes.remove(tag)
-
-    def __init__(self,
-                 tag: any,
-                 cmd: [str],
-                 data_available_callback: callable,
-                 terminated_callback: callable,
-                 session_flags: int,
-                 term: str | None,
-                 remote_identity: str | None,
-                 loop: asyncio.AbstractEventLoop = None):
-
-        self._log = _get_logger(self.__class__.__name__)
-        self._loop = loop if loop is not None else asyncio.get_running_loop()
-        self._process = process.CallbackSubprocess(argv=cmd,
-                                                   env={"TERM": term or os.environ.get("TERM", None),
-                                                        "RNS_REMOTE_IDENTITY": remote_identity or ""},
-                                                   loop=loop,
-                                                   stdout_callback=self._stdout_data,
-                                                   stderr_callback=self._stderr_data,
-                                                   terminated_callback=terminated_callback,
-                                                   stdin_is_pipe=_check_and(session_flags,
-                                                                            Session.REQUEST_FLAGS_PIPE_STDIN),
-                                                   stdout_is_pipe=_check_and(session_flags,
-                                                                             Session.REQUEST_FLAGS_PIPE_STDOUT),
-                                                   stderr_is_pipe=_check_and(session_flags,
-                                                                             Session.REQUEST_FLAGS_PIPE_STDERR))
-        self._log.debug(f"Starting {cmd}")
-        self._stdout_buffer = bytearray()
-        self._stderr_buffer = bytearray()
-        self._lock = threading.RLock()
-        self._data_available_cb = data_available_callback
-        self._terminated_cb = terminated_callback
-        self._pending_receipt: RNS.PacketReceipt | None = None
-        self._process.start()
-        self._term_state: [int] = None
-        self._session_flags: int = session_flags
-        Session.put_for_tag(tag, self)
-
-    def pending_receipt_peek(self) -> RNS.PacketReceipt | None:
-        return self._pending_receipt
-
-    def pending_receipt_take(self) -> RNS.PacketReceipt | None:
-        with self._lock:
-            val = self._pending_receipt
-            self._pending_receipt = None
-            return val
-
-    def pending_receipt_put(self, receipt: RNS.PacketReceipt | None):
-        with self._lock:
-            self._pending_receipt = receipt
-
-    @property
-    def process(self) -> process.CallbackSubprocess:
-        return self._process
-
-    @property
-    def return_code(self) -> int | None:
-        return self.process.return_code
-
-    @property
-    def lock(self) -> threading.RLock:
-        return self._lock
-
-    def read_stdout(self, count: int) -> bytes:
-        with self.lock:
-            initial_len = len(self._stdout_buffer)
-            take = self._stdout_buffer[:count]
-            self._stdout_buffer = self._stdout_buffer[count:]
-            self._log.debug(f"stdout: read {len(take)} bytes of {initial_len}, {len(self._stdout_buffer)} remaining")
-            return take
-
-    def _stdout_data(self, data: bytes):
-        with self.lock:
-            self._stdout_buffer.extend(data)
-            total_available = len(self._stdout_buffer) + len(self._stderr_buffer)
-        try:
-            self._data_available_cb(total_available)
-        except Exception as e:
-            self._log.error(f"stdout: error calling ProcessState data_available_callback {e}")
-
-    def read_stderr(self, count: int) -> bytes:
-        with self.lock:
-            initial_len = len(self._stderr_buffer)
-            take = self._stderr_buffer[:count]
-            self._stderr_buffer = self._stderr_buffer[count:]
-            self._log.debug(f"stderr: read {len(take)} bytes of {initial_len}, {len(self._stderr_buffer)} remaining")
-            return take
-
-    def _stderr_data(self, data: bytes):
-        with self.lock:
-            self._stderr_buffer.extend(data)
-            total_available = len(self._stderr_buffer) + len(self._stdout_buffer)
-        try:
-            self._data_available_cb(total_available)
-        except Exception as e:
-            self._log.error(f"stderr: error calling ProcessState data_available_callback {e}")
-
-    TERMSTATE_IDX_TERM = 0
-    TERMSTATE_IDX_TIOS = 1
-    TERMSTATE_IDX_ROWS = 2
-    TERMSTATE_IDX_COLS = 3
-    TERMSTATE_IDX_HPIX = 4
-    TERMSTATE_IDX_VPIX = 5
-
-    def _update_winsz(self):
-        try:
-            self.process.set_winsize(self._term_state[1],
-                                     self._term_state[2],
-                                     self._term_state[3],
-                                     self._term_state[4])
-        except Exception as e:
-            self._log.debug(f"failed to update winsz: {e}")
-
-    REQUEST_IDX_VERS = 0
-    REQUEST_IDX_STDIN = 1
-    REQUEST_IDX_TERM = 2
-    REQUEST_IDX_TIOS = 3
-    REQUEST_IDX_ROWS = 4
-    REQUEST_IDX_COLS = 5
-    REQUEST_IDX_HPIX = 6
-    REQUEST_IDX_VPIX = 7
-    REQUEST_IDX_CMD = 8
-    REQUEST_IDX_FLAGS = 9
-    REQUEST_IDX_BYTES_AVAILABLE = 10
-    REQUEST_FLAGS_PIPE_STDIN  = 0x01
-    REQUEST_FLAGS_PIPE_STDOUT = 0x02
-    REQUEST_FLAGS_PIPE_STDERR = 0x04
-    REQUEST_FLAGS_EOF_STDIN   = 0x08
-
-    @staticmethod
-    def default_request() -> [any]:
-        global _tr
-        request: list[any] = [
-            _PROTOCOL_VERSION_DEFAULT,  # 0 Protocol Version
-            None,  # 1  Stdin
-            None,  # 2  TERM variable
-            None,  # 3  termios attributes or something
-            None,  # 4  terminal rows
-            None,  # 5  terminal cols
-            None,  # 6  terminal horizontal pixels
-            None,  # 7  terminal vertical pixels
-            None,  # 8  Command to run
-            0,     # 9  Flags
-            0,     # 10 Bytes Available
-        ].copy()
-
-        if os.isatty(0):
-            request[Session.REQUEST_IDX_TERM] = os.environ.get("TERM", None)
-            request[Session.REQUEST_IDX_TIOS] = _tr.original_attr() if _tr else None
-            with contextlib.suppress(OSError):
-                request[Session.REQUEST_IDX_ROWS], \
-                    request[Session.REQUEST_IDX_COLS], \
-                    request[Session.REQUEST_IDX_HPIX], \
-                    request[Session.REQUEST_IDX_VPIX] = process.tty_get_winsize(0)
-        request[Session.REQUEST_IDX_FLAGS] = _bitwise_or_if(request[Session.REQUEST_IDX_FLAGS], not os.isatty(0),
-                                                            Session.REQUEST_FLAGS_PIPE_STDIN)
-        request[Session.REQUEST_IDX_FLAGS] = _bitwise_or_if(request[Session.REQUEST_IDX_FLAGS], not os.isatty(1),
-                                                            Session.REQUEST_FLAGS_PIPE_STDOUT)
-        request[Session.REQUEST_IDX_FLAGS] = _bitwise_or_if(request[Session.REQUEST_IDX_FLAGS], not os.isatty(2),
-                                                            Session.REQUEST_FLAGS_PIPE_STDERR)
-        return request
-
-    def process_request(self, data: [any], read_size: int) -> [any]:
-        stdin = data[Session.REQUEST_IDX_STDIN]  # Data passed to stdin
-        # term = data[ProcessState.REQUEST_IDX_TERM]  # TERM environment variable
-        # tios = data[ProcessState.REQUEST_IDX_TIOS]  # termios attr
-        # rows = data[ProcessState.REQUEST_IDX_ROWS]  # window rows
-        # cols = data[ProcessState.REQUEST_IDX_COLS]  # window cols
-        # hpix = data[ProcessState.REQUEST_IDX_HPIX]  # window horizontal pixels
-        # vpix = data[ProcessState.REQUEST_IDX_VPIX]  # window vertical pixels
-        # term_state = data[ProcessState.REQUEST_IDX_ROWS:ProcessState.REQUEST_IDX_VPIX+1]
-        bytes_available = data[Session.REQUEST_IDX_BYTES_AVAILABLE]
-        flags = data[Session.REQUEST_IDX_FLAGS]
-        stdin_eof = _check_and(flags, Session.REQUEST_FLAGS_EOF_STDIN)
-        response = Session.default_response()
-
-        first_term_state = self._term_state is None
-        term_state = data[Session.REQUEST_IDX_TIOS:Session.REQUEST_IDX_VPIX + 1]
-
-        response[Session.RESPONSE_IDX_FLAGS] = _bitwise_or_if(response[Session.RESPONSE_IDX_FLAGS],
-                                                              self.process.running, Session.RESPONSE_FLAGS_RUNNING)
-        if self.process.running:
-            if term_state != self._term_state:
-                self._term_state = term_state
-                if term_state is not None:
-                    self._update_winsz()
-                    if first_term_state is not None:
-                        # TODO: use a more specific error
-                        with contextlib.suppress(Exception):
-                            self.process.tcsetattr(termios.TCSADRAIN, term_state[0])
-            if stdin is not None and len(stdin) > 0:
-                if data[Session.REQUEST_IDX_VERS] < _PROTOCOL_VERSION_2:
-                    stdin = base64.b64decode(stdin)
-                self.process.write(stdin)
-            if stdin_eof and bytes_available == 0:
-                module_logger.debug("Closing stdin")
-                with contextlib.suppress(Exception):
-                    self.process.close_stdin()
-        response[Session.RESPONSE_IDX_RETCODE] = None if self.process.running else self.return_code
-
-        with self.lock:
-            #prioritizing stderr
-            stderr = self.read_stderr(read_size)
-            stdout = self.read_stdout(read_size - len(stderr))
-            response[Session.RESPONSE_IDX_RDYBYTE] = len(self._stdout_buffer) + len(self._stderr_buffer)
-
-        if stderr is not None and len(stderr) > 0:
-            response[Session.RESPONSE_IDX_STDERR] = bytes(stderr)
-        if stdout is not None and len(stdout) > 0:
-            response[Session.RESPONSE_IDX_STDOUT] = bytes(stdout)
-        return response
-
-    RESPONSE_IDX_VERSION = 0
-    RESPONSE_IDX_FLAGS   = 1
-    RESPONSE_IDX_RETCODE = 2
-    RESPONSE_IDX_RDYBYTE = 3
-    RESPONSE_IDX_STDERR  = 4
-    RESPONSE_IDX_STDOUT  = 5
-    RESPONSE_IDX_TMSTAMP = 6
-    RESPONSE_FLAGS_RUNNING    = 0x01
-    RESPONSE_FLAGS_EOF_STDOUT = 0x02
-    RESPONSE_FLAGS_EOF_STDERR = 0x04
-
-    @staticmethod
-    def default_response() -> [any]:
-        response: list[any] = [
-            _PROTOCOL_VERSION_DEFAULT,  # 0: Protocol version
-            False,  # 1: Process running
-            None,  # 2: Return value
-            0,  # 3: Number of outstanding bytes
-            None,  # 4: Stderr
-            None,  # 5: Stdout
-            None,  # 6: Timestamp
-        ].copy()
-        response[Session.RESPONSE_IDX_TMSTAMP] = time.time()
-        return response
-
-    @classmethod
-    def error_response(cls, msg: str) -> [any]:
-        response = cls.default_response()
-        msg_bytes = f"{msg}\r\n".encode("utf-8")
-        response[Session.RESPONSE_IDX_STDERR] = bytes(msg_bytes)
-        response[Session.RESPONSE_IDX_RETCODE] = 255
-        response[Session.RESPONSE_IDX_RDYBYTE] = 0
-        return response
-
-
-def _subproc_data_ready(link: RNS.Link, chars_available: int):
-    global _retry_timer
-    log = _get_logger("_subproc_data_ready")
-    session: Session = Session.get_for_tag(link.link_id)
-
-    def send(timeout: bool, tag: any, tries: int) -> any:
-        # log.debug("send")
-        def inner():
-            # log.debug("inner")
-            try:
-                if link.status != RNS.Link.ACTIVE:
-                    _retry_timer.complete(link.link_id)
-                    session.pending_receipt_take()
-                    return
-
-                pr = session.pending_receipt_take()
-                log.debug(f"send inner pr: {pr}")
-                if pr is not None and pr.status == RNS.PacketReceipt.DELIVERED:
-                    if not timeout:
-                        _retry_timer.complete(tag)
-                    log.debug(f"Notification completed with status {pr.status} on link {link}")
-                    return
-                else:
-                    if not timeout:
-                        log.debug(
-                            f"Notifying client try {tries} (retcode: {session.return_code} " +
-                            f"chars avail: {chars_available})")
-                        packet = RNS.Packet(link, DATA_AVAIL_MSG.encode("utf-8"))
-                        packet.send()
-                        pr = packet.receipt
-                        session.pending_receipt_put(pr)
-                    else:
-                        log.error(f"Retry count exceeded, terminating link {link}")
-                        _retry_timer.complete(link.link_id)
-                        link.teardown()
-            except Exception as e:
-                log.error("Error notifying client: " + str(e))
-
-        _loop.call_soon_threadsafe(inner)
-        return link.link_id
-
-    with session.lock:
-        if not _retry_timer.has_tag(link.link_id):
-            _retry_timer.begin(try_limit=15,
-                               wait_delay=max(link.rtt * 5 if link.rtt is not None else 1, 1),
-                               try_callback=functools.partial(send, False),
-                               timeout_callback=functools.partial(send, True))
-        else:
-            log.debug(f"Notification already pending for link {link}")
-
-
-def _subproc_terminated(link: RNS.Link, return_code: int):
-    global _loop
-    log = _get_logger("_subproc_terminated")
-    log.info(f"Subprocess returned {return_code} for link {link}")
-    proc = Session.get_for_tag(link.link_id)
-    if proc is None:
-        log.debug(f"no proc for link {link}")
-        return
-
-    def cleanup():
-        def inner():
-            log.debug(f"cleanup culled link {link}")
-            if link and link.status != RNS.Link.CLOSED:
-                with exception.permit(SystemExit):
-                    try:
-                        link.teardown()
-                    finally:
-                        Session.clear_tag(link.link_id)
-
-        _loop.call_later(300, inner)
-        _loop.call_soon(_subproc_data_ready, link, 0)
-
-    _loop.call_soon_threadsafe(cleanup)
-
-
-def _listen_start_proc(link: RNS.Link, remote_identity: str | None, term: str, cmd: [str],
-                       loop: asyncio.AbstractEventLoop, session_flags: int) -> Session | None:
-    log = _get_logger("_listen_start_proc")
-    try:
-        return Session(tag=link.link_id,
-                       cmd=cmd,
-                       session_flags=session_flags,
-                       term=term,
-                       remote_identity=remote_identity,
-                       loop=loop,
-                       data_available_callback=functools.partial(_subproc_data_ready, link),
-                       terminated_callback=functools.partial(_subproc_terminated, link))
-    except Exception as e:
-        log.error("Failed to launch process: " + str(e))
-        _subproc_terminated(link, 255)
-    return None
-
-
-def _listen_link_established(link):
-    global _allow_all
-    log = _get_logger("_listen_link_established")
-    link.set_remote_identified_callback(_initiator_identified)
-    link.set_link_closed_callback(_listen_link_closed)
-    log.info("Link " + str(link) + " established")
-
-
-def _listen_link_closed(link: RNS.Link):
-    log = _get_logger("_listen_link_closed")
-    # async def cleanup():
-    log.info("Link " + str(link) + " closed")
-    proc: Session | None = Session.get_for_tag(link.link_id)
-    if proc is None:
-        log.warning(f"No process for link {link}")
-    else:
-        try:
-            proc.process.terminate()
-            _retry_timer.complete(link.link_id)
-        except Exception as e:
-            log.error(f"Error closing process for link {link}: {e}")
-    Session.clear_tag(link.link_id)
-
-
-def _initiator_identified(link, identity):
-    global _allow_all, _cmd, _loop
-    log = _get_logger("_initiator_identified")
-    log.info("Initiator of link " + str(link) + " identified as " + RNS.prettyhexrep(identity.hash))
-    if not _allow_all and identity.hash not in _allowed_identity_hashes:
-        log.warning("Identity " + RNS.prettyhexrep(identity.hash) + " not allowed, tearing down link", RNS.LOG_WARNING)
-        link.teardown()
-
-
-def _listen_request(path, data, request_id, link_id, remote_identity, requested_at):
-    global _destination, _retry_timer, _loop, _cmd, _no_remote_command
-    log = _get_logger("_listen_request")
-    log.debug(
-        f"listen_execute {path} {RNS.prettyhexrep(request_id)} {RNS.prettyhexrep(link_id)} {remote_identity}, {requested_at}")
-    if not hasattr(data, "__len__") or len(data) < 1:
-        raise Exception("Request data invalid")
-    _retry_timer.complete(link_id)
-    link: RNS.Link = next(filter(lambda l: l.link_id == link_id, _destination.links), None)
-    if link is None:
-        log.error(f"Invalid request {request_id}, no link found with id {link_id}")
-        return None
-
-    remote_version = data[Session.REQUEST_IDX_VERS]
-    if not _protocol_check_magic(remote_version):
-        log.error("Request magic incorrect")
-        link.teardown()
-        return None
-
-    if not remote_version <= _PROTOCOL_VERSION_3:
-        return Session.error_response("Listener<->initiator version mismatch")
-
-    cmd = _cmd.copy()
-    remote_command = data[Session.REQUEST_IDX_CMD]
-    if remote_command is not None and len(remote_command) > 0:
-        if _no_remote_command:
-            return Session.error_response("Listener does not permit initiator to provide command.")
-        elif _remote_cmd_as_args:
-            cmd.extend(remote_command)
-        else:
-            cmd = remote_command
-
-    if not _no_remote_command and (cmd is None or len(cmd) == 0):
-        return Session.error_response("No command supplied and no default command available.")
-
-    session: Session | None = None
-    try:
-        term = data[Session.REQUEST_IDX_TERM]
-        # sanitize
-        if term is not None:
-            term = re.sub('[^A-Za-z-0-9\-\_]','', term)
-        session = Session.get_for_tag(link.link_id)
-        if session is None:
-            log.debug(f"Process not found for link {link}")
-            session = _listen_start_proc(link=link,
-                                         term=term,
-                                         session_flags=data[Session.REQUEST_IDX_FLAGS],
-                                         cmd=cmd,
-                                         remote_identity=RNS.hexrep(remote_identity.hash).replace(":", ""),
-                                         loop=_loop)
-            if session is None:
-                return Session.error_response("Unable to start subprocess")
-
-        # leave significant headroom for metadata and encoding
-        result = session.process_request(data, _protocol_response_chars_take(link.MDU, remote_version))
-        return result
-        # return ProcessState.default_response()
-    except Exception as e:
-        log.error(f"Error procesing request for link {link}: {e}")
-        try:
-            if session is not None and session.process.running:
-                session.process.terminate()
-        except Exception as ee:
-            log.debug(f"Error terminating process for link {link}: {ee}")
-
-    return Session.default_response()
+                await asyncio.sleep(0.01)
 
 
 async def _spin(until: callable = None, timeout: float | None = None) -> bool:
@@ -731,7 +218,7 @@ async def _spin(until: callable = None, timeout: float | None = None) -> bool:
         timeout += time.time()
 
     while (timeout is None or time.time() < timeout) and not until():
-        if await _check_finished(0.001):
+        if await _check_finished(0.01):
             raise asyncio.CancelledError()
     if timeout is not None and time.time() > timeout:
         return False
@@ -744,15 +231,28 @@ _remote_exec_grace = 2.0
 _new_data: asyncio.Event | None = None
 _tr: process.TTYRestorer | None = None
 
+_pq = queue.Queue()
+
+class InitiatorState(enum.IntEnum):
+    IS_INITIAL      = 0
+    IS_LINKED     = 1
+    IS_WAIT_VERS  = 2
+    IS_RUNNING    = 3
+    IS_TERMINATE  = 4
+    IS_TEARDOWN   = 5
+
+
+def _client_link_closed(link):
+    log = _get_logger("_client_link_closed")
+    _finished.set()
+
 
 def _client_packet_handler(message, packet):
     global _new_data
     log = _get_logger("_client_packet_handler")
-    if message is not None and message.decode("utf-8") == DATA_AVAIL_MSG and _new_data is not None:
-        log.debug("data available")
-        _new_data.set()
-    else:
-        log.error(f"received unhandled packet")
+    packet.prove()
+    _pq.put(message)
+
 
 
 class RemoteExecutionError(Exception):
@@ -760,15 +260,10 @@ class RemoteExecutionError(Exception):
         self.msg = msg
 
 
-def _response_handler(request_receipt: RNS.RequestReceipt):
-    pass
-
-
-async def _execute(configdir, identitypath=None, verbosity=0, quietness=0, noid=False, destination=None,
-                   service_name="default", stdin=None, timeout=RNS.Transport.PATH_REQUEST_TIMEOUT,
-                   cmd: [str] | None = None, stdin_eof=False, bytes_available=0):
+async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0, noid=False, destination=None,
+                         service_name="default", timeout=RNS.Transport.PATH_REQUEST_TIMEOUT):
     global _identity, _reticulum, _link, _destination, _remote_exec_grace, _tr, _new_data
-    log = _get_logger("_execute")
+    log = _get_logger("_initiate_link")
 
     dest_len = (RNS.Reticulum.TRUNCATED_HASHLENGTH // 8) * 2
     if len(destination) != dest_len:
@@ -809,6 +304,8 @@ async def _execute(configdir, identitypath=None, verbosity=0, quietness=0, noid=
         _link = RNS.Link(_destination)
         _link.did_identify = False
 
+        _link.set_link_closed_callback(_client_link_closed)
+
     log.info(f"Establishing link...")
     if not await _spin(until=lambda: _link.status == RNS.Link.ACTIVE, timeout=timeout):
         raise RemoteExecutionError("Could not establish link with " + RNS.prettyhexrep(destination_hash))
@@ -820,110 +317,6 @@ async def _execute(configdir, identitypath=None, verbosity=0, quietness=0, noid=
 
     _link.set_packet_callback(_client_packet_handler)
 
-    request = Session.default_request()
-    log.debug(f"Sending {len(stdin) or 0} bytes to listener")
-    # log.debug(f"Sending {stdin} to listener")
-    request[Session.REQUEST_IDX_STDIN] = bytes(stdin)
-    request[Session.REQUEST_IDX_CMD] = cmd
-    request[Session.REQUEST_IDX_FLAGS] = _bitwise_or_if(request[Session.REQUEST_IDX_FLAGS], stdin_eof,
-                                                        Session.REQUEST_FLAGS_EOF_STDIN)
-    request[Session.REQUEST_IDX_BYTES_AVAILABLE] = bytes_available
-
-    # TODO: Tune
-    timeout = timeout + _link.rtt * 4 + _remote_exec_grace
-
-    log.debug("Sending request")
-    request_receipt = _link.request(
-        path="data",
-        data=request,
-        timeout=timeout
-    )
-    timeout += 0.5
-
-    log.debug("Waiting for delivery")
-    await _spin(
-        until=lambda: _link.status == RNS.Link.CLOSED or (
-                request_receipt.status != RNS.RequestReceipt.FAILED and
-                request_receipt.status != RNS.RequestReceipt.SENT),
-        timeout=timeout
-    )
-
-    if _link.status == RNS.Link.CLOSED:
-        raise RemoteExecutionError("Could not request remote execution, link was closed")
-
-    if request_receipt.status == RNS.RequestReceipt.FAILED:
-        raise RemoteExecutionError("Could not request remote execution")
-
-    await _spin(
-        until=lambda: request_receipt.status != RNS.RequestReceipt.DELIVERED,
-        timeout=timeout
-    )
-
-    if request_receipt.status == RNS.RequestReceipt.FAILED:
-        raise RemoteExecutionError("No result was received")
-
-    if request_receipt.status == RNS.RequestReceipt.FAILED:
-        raise RemoteExecutionError("Receiving result failed")
-
-    if request_receipt.response is not None:
-        try:
-            version = request_receipt.response[Session.RESPONSE_IDX_VERSION] or 0
-            if not _protocol_check_magic(version):
-                raise RemoteExecutionError("Protocol error")
-            elif version != _PROTOCOL_VERSION_3:
-                raise RemoteExecutionError("Protocol version mismatch")
-
-            flags = request_receipt.response[Session.RESPONSE_IDX_FLAGS]
-            running = _check_and(flags, Session.RESPONSE_FLAGS_RUNNING)
-            stdout_eof = _check_and(flags, Session.RESPONSE_FLAGS_EOF_STDOUT)
-            stderr_eof = _check_and(flags, Session.RESPONSE_FLAGS_EOF_STDERR)
-            return_code = request_receipt.response[Session.RESPONSE_IDX_RETCODE]
-            ready_bytes = request_receipt.response[Session.RESPONSE_IDX_RDYBYTE] or 0
-            stdout = request_receipt.response[Session.RESPONSE_IDX_STDOUT]
-            stderr = request_receipt.response[Session.RESPONSE_IDX_STDERR]
-            # if stdout is not None:
-            #     stdout = base64.b64decode(stdout)
-            timestamp = request_receipt.response[Session.RESPONSE_IDX_TMSTAMP]
-            # log.debug("data: " + (stdout.decode("utf-8") if stdout is not None else ""))
-        except RemoteExecutionError:
-            raise
-        except Exception as e:
-            raise RemoteExecutionError(f"Received invalid response") from e
-
-        if stdout is not None:
-            _tr.raw()
-            log.debug(f"stdout: {stdout}")
-            os.write(1, stdout)
-            sys.stdout.flush()
-
-        if stderr is not None:
-            _tr.raw()
-            log.debug(f"stderr: {stderr}")
-            os.write(2, stderr)
-            sys.stderr.flush()
-
-        if stderr_eof and ready_bytes == 0:
-            log.debug("Closing stderr")
-            os.close(2)
-
-        if stdout_eof and ready_bytes == 0:
-            log.debug("Closing stdout")
-            os.close(1)
-
-        got_bytes = (len(stdout) if stdout is not None else 0) + (len(stderr) if stderr is not None else 0)
-        log.debug(f"{got_bytes} chars received, {ready_bytes} bytes ready on server, return code {return_code}")
-
-        if ready_bytes > 0:
-            _new_data.set()
-
-        if (not running or return_code is not None) and (ready_bytes == 0):
-            log.debug(f"returning running: {running}, return_code: {return_code}")
-            return return_code or 255
-
-        return None
-
-_pre_input = bytearray()
-
 
 async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness: int, noid: bool, destination: str,
                     service_name: str, timeout: float, command: [str] | None = None):
@@ -931,88 +324,164 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
     log = _get_logger("_initiate")
     loop = asyncio.get_running_loop()
     _new_data = asyncio.Event()
-
+    state = InitiatorState.IS_INITIAL
     data_buffer = bytearray(sys.stdin.buffer.read()) if not os.isatty(sys.stdin.fileno()) else bytearray()
 
-    def sigwinch_handler():
-        # log.debug("WindowChanged")
-        if _new_data is not None:
-            _new_data.set()
+    await _initiate_link(
+        configdir=configdir,
+        identitypath=identitypath,
+        verbosity=verbosity,
+        quietness=quietness,
+        noid=noid,
+        destination=destination,
+        service_name=service_name,
+        timeout=timeout,
+    )
 
-    stdin_eof = False
-    def stdin():
-        nonlocal stdin_eof
+    if not _link or _link.status != RNS.Link.ACTIVE:
+        _finished.set()
+        return 255
+
+    state = InitiatorState.IS_LINKED
+    outlet = session.RNSOutlet(_link)
+    with protocol.Messenger(retry_delay_min=5) as messenger:
+
+        # Next step after linking and identifying: send version
+        # if not await _spin(lambda: messenger.is_outlet_ready(outlet), timeout=5):
+        #     print("Error bringing up link")
+        #     return 253
+
+        messenger.send(outlet, protocol.VersionInfoMessage())
         try:
-            data = process.tty_read(sys.stdin.fileno())
-            log.debug(f"stdin {data}")
-            if data is not None:
-                data_buffer.extend(data)
-                _new_data.set()
-        except EOFError:
-            if os.isatty(0):
-                data_buffer.extend(process.CTRL_D)
-            stdin_eof = True
-            process.tty_unset_reader_callbacks(sys.stdin.fileno())
+            vp = _pq.get(timeout=max(outlet.rtt * 20, 5))
+            vm = messenger.receive(vp)
+            if not isinstance(vm, protocol.VersionInfoMessage):
+                raise Exception("Invalid message received")
+            log.debug(f"Server version info: sw {vm.sw_version} prot {vm.protocol_version}")
+            state = InitiatorState.IS_RUNNING
+        except queue.Empty:
+            print("Protocol error")
+            return 254
 
-    process.tty_add_reader_callback(sys.stdin.fileno(), stdin)
+        winch = False
+        def sigwinch_handler():
+            nonlocal winch
+            # log.debug("WindowChanged")
+            winch = True
+            # if _new_data is not None:
+            #     _new_data.set()
 
-    await _check_finished()
-    loop.add_signal_handler(signal.SIGWINCH, sigwinch_handler)
+        stdin_eof = False
+        def stdin():
+            nonlocal stdin_eof
+            try:
+                data = process.tty_read(sys.stdin.fileno())
+                log.debug(f"stdin {data}")
+                if data is not None:
+                    data_buffer.extend(data)
+                    _new_data.set()
+            except EOFError:
+                if os.isatty(0):
+                    data_buffer.extend(process.CTRL_D)
+                stdin_eof = True
+                process.tty_unset_reader_callbacks(sys.stdin.fileno())
 
-    # leave a lot of overhead
-    mdu = 64
-    rtt = 5
-    first_loop = True
-    cmdline = " ".join(command or [])
-    while not await _check_finished():
+        process.tty_add_reader_callback(sys.stdin.fileno(), stdin)
+
+        await _check_finished()
+
+        tcattr = None
+        rows, cols, hpix, vpix = (None, None, None, None)
         try:
-            log.debug("top of client loop")
-            stdin = data_buffer[:mdu]
-            data_buffer = data_buffer[mdu:]
-            _new_data.clear()
-            log.debug("before _execute")
-            return_code = await _execute(
-                configdir=configdir,
-                identitypath=identitypath,
-                verbosity=verbosity,
-                quietness=quietness,
-                noid=noid,
-                destination=destination,
-                service_name=service_name,
-                stdin=stdin,
-                timeout=timeout,
-                cmd=command,
-                stdin_eof=stdin_eof,
-                bytes_available=len(data_buffer)
-            )
+            tcattr = termios.tcgetattr(0)
+            rows, cols, hpix, vpix = process.tty_get_winsize(0)
+        except:
+            try:
+                tcattr = termios.tcgetattr(1)
+                rows, cols, hpix, vpix = process.tty_get_winsize(1)
+            except:
+                try:
+                    tcattr = termios.tcgetattr(2)
+                    rows, cols, hpix, vpix = process.tty_get_winsize(2)
+                except:
+                    pass
 
-            if first_loop:
-                first_loop = False
-                mdu = _protocol_request_chars_take(_link.MDU,
-                                                   _PROTOCOL_VERSION_DEFAULT,
-                                                   os.environ.get("TERM", ""),
-                                                   cmdline)
-                _new_data.set()
+        messenger.send(outlet, protocol.ExecuteCommandMesssage(cmdline=command,
+                                                               pipe_stdin=not os.isatty(0),
+                                                               pipe_stdout=not os.isatty(1),
+                                                               pipe_stderr=not os.isatty(2),
+                                                               tcflags=tcattr,
+                                                               term=os.environ.get("TERM", None),
+                                                               rows=rows,
+                                                               cols=cols,
+                                                               hpix=hpix,
+                                                               vpix=vpix))
 
-            if _link:
-                rtt = _link.rtt
 
-            if return_code is not None:
-                log.debug(f"received return code {return_code}, exiting")
-                with exception.permit(SystemExit, KeyboardInterrupt):
+
+
+        loop.add_signal_handler(signal.SIGWINCH, sigwinch_handler)
+        mdu = _link.MDU - 16
+        sent_eof = False
+
+        while not await _check_finished() and state in [InitiatorState.IS_RUNNING]:
+            try:
+                try:
+                    packet = _pq.get_nowait()
+                    message = messenger.receive(packet)
+
+                    if isinstance(message, protocol.StreamDataMessage):
+                        if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDOUT:
+                            if message.data and len(message.data) > 0:
+                                _tr.raw()
+                                log.debug(f"stdout: {message.data}")
+                                os.write(1, message.data)
+                                sys.stdout.flush()
+                            if message.eof:
+                                os.close(1)
+                        if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDERR:
+                            if message.data and len(message.data) > 0:
+                                _tr.raw()
+                                log.debug(f"stdout: {message.data}")
+                                os.write(2, message.data)
+                                sys.stderr.flush()
+                            if message.eof:
+                                os.close(2)
+                    elif isinstance(message, protocol.CommandExitedMessage):
+                        log.debug(f"received return code {message.return_code}, exiting")
+                        with exception.permit(SystemExit, KeyboardInterrupt):
+                            _link.teardown()
+                            return message.return_code
+                    elif isinstance(message, protocol.ErrorMessage):
+                        log.error(message.data)
+                        if message.fatal:
+                            _link.teardown()
+                            return 200
+
+                except queue.Empty:
+                    pass
+
+                if messenger.is_outlet_ready(outlet):
+                    stdin = data_buffer[:mdu]
+                    data_buffer = data_buffer[mdu:]
+                    eof = not sent_eof and stdin_eof and len(stdin) == 0
+                    if len(stdin) > 0 or eof:
+                        messenger.send(outlet, protocol.StreamDataMessage(protocol.StreamDataMessage.STREAM_ID_STDIN,
+                                                                          stdin, eof))
+                        sent_eof = eof
+            except RemoteExecutionError as e:
+                print(e.msg)
+                return 255
+            except Exception as ex:
+                print(f"Client exception: {ex}")
+                if _link and _link.status != RNS.Link.CLOSED:
                     _link.teardown()
+                    return 127
 
-                return return_code
-        except asyncio.CancelledError:
-            if _link and _link.status != RNS.Link.CLOSED:
-                _link.teardown()
-                return 0
-        except RemoteExecutionError as e:
-            print(e.msg)
-            return 255
-
-        await process.event_wait_any([_new_data, _finished], timeout=min(max(rtt * 50, 5), 120))
-    return 0
+            # await process.event_wait_any([_new_data, _finished], timeout=min(max(rtt * 50, 5), 120))
+            await asyncio.sleep(0.01)
+        log.debug("after main loop")
+        return 0
 
 
 def _loop_set_signal(sig, loop):

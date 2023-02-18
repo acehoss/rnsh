@@ -382,8 +382,11 @@ def _launch_child(cmd_line: list[str], env: dict[str, str], stdin_is_pipe: bool,
             # Make PTY controlling if necessary
             if child_fd is not None:
                 os.setsid()
-                tmp_fd = os.open(os.ttyname(0 if not stdin_is_pipe else 1 if not stdout_is_pipe else 2), os.O_RDWR)
-                os.close(tmp_fd)
+                try:
+                    tmp_fd = os.open(os.ttyname(0 if not stdin_is_pipe else 1 if not stdout_is_pipe else 2), os.O_RDWR)
+                    os.close(tmp_fd)
+                except:
+                    pass
                 # fcntl.ioctl(0 if not stdin_is_pipe else 1 if not stdout_is_pipe else 2), os.O_RDWR, termios.TIOCSCTTY, 0)
 
             # Execute the command
@@ -445,7 +448,8 @@ class CallbackSubprocess:
         self._child_stdout: int = None
         self._child_stderr: int = None
         self._return_code: int = None
-        self._eof: bool = False
+        self._stdout_eof: bool = False
+        self._stderr_eof: bool = False
         self._stdin_is_pipe = stdin_is_pipe
         self._stdout_is_pipe = stdout_is_pipe
         self._stderr_is_pipe = stderr_is_pipe
@@ -455,6 +459,21 @@ class CallbackSubprocess:
         Terminate child process if running
         :param kill_delay: if after kill_delay seconds the child process has not exited, escalate to SIGHUP and SIGKILL
         """
+
+        same = self._child_stdout == self._child_stderr
+        with contextlib.suppress(OSError):
+            if not self._stdout_eof:
+                tty_unset_reader_callbacks(self._child_stdout)
+                os.close(self._child_stdout)
+                self._child_stdout = None
+
+        if not same:
+            with contextlib.suppress(OSError):
+                if not self._stderr_eof:
+                    tty_unset_reader_callbacks(self._child_stderr)
+                    os.close(self._child_stderr)
+                    self._child_stdout = None
+
         self._log.debug("terminate()")
         if not self.running:
             return
@@ -477,7 +496,7 @@ class CallbackSubprocess:
                 os.waitpid(self._pid, 0)
                 self._log.debug("wait() finish")
 
-        threading.Thread(target=wait).start()
+        threading.Thread(target=wait, daemon=True).start()
 
     def close_stdin(self):
         with contextlib.suppress(Exception):
@@ -592,26 +611,44 @@ class CallbackSubprocess:
 
         self._loop.call_later(CallbackSubprocess.PROCESS_POLL_TIME, poll)
 
-        def reader(fd: int, callback: callable):
+        def stdout():
             try:
                 with exception.permit(SystemExit):
-                    data = tty_read(fd)
+                    data = tty_read_poll(self._child_stdout)
                     if data is not None and len(data) > 0:
-                        callback(data)
+                        self._stdout_cb(data)
             except EOFError:
-                self._eof = True
+                self._stdout_eof = True
                 tty_unset_reader_callbacks(self._child_stdout)
-                callback(bytearray())
+                self._stdout_cb(bytearray())
+                with contextlib.suppress(OSError):
+                    os.close(self._child_stdout)
 
-        tty_add_reader_callback(self._child_stdout, functools.partial(reader, self._child_stdout, self._stdout_cb),
-                                self._loop)
+        def stderr():
+            try:
+                with exception.permit(SystemExit):
+                    data = tty_read_poll(self._child_stderr)
+                    if data is not None and len(data) > 0:
+                        self._stderr_cb(data)
+            except EOFError:
+                self._stderr_eof = True
+                tty_unset_reader_callbacks(self._child_stderr)
+                self._stdout_cb(bytearray())
+                with contextlib.suppress(OSError):
+                    os.close(self._child_stderr)
+
+        tty_add_reader_callback(self._child_stdout, stdout, self._loop)
         if self._child_stderr != self._child_stdout:
-            tty_add_reader_callback(self._child_stderr, functools.partial(reader, self._child_stderr, self._stderr_cb),
-                                self._loop)
+            tty_add_reader_callback(self._child_stderr, stderr, self._loop)
 
     @property
-    def eof(self):
-        return self._eof or not self.running
+    def stdout_eof(self):
+        return self._stdout_eof or not self.running
+
+    @property
+    def stderr_eof(self):
+        return self._stderr_eof or not self.running
+
 
     @property
     def return_code(self) -> int:

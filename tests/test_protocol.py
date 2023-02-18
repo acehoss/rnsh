@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import logging
+
+from rnsh.protocol import _TReceipt, MessageState
+from typing import Callable
+
 logging.getLogger().setLevel(logging.DEBUG)
 
 import rnsh.protocol
@@ -14,64 +18,60 @@ import uuid
 module_logger = logging.getLogger(__name__)
 
 
-class Link:
+class Receipt:
+    def __init__(self, state: rnsh.protocol.MessageState, raw: bytes):
+        self.state = state
+        self.raw = raw
+
+
+class MessageOutletTest(rnsh.protocol.MessageOutletBase):
     def __init__(self, mdu: int, rtt: float):
         self.link_id = uuid.uuid4()
         self.timeout_callbacks = 0
-        self.mdu = mdu
-        self.rtt = rtt
-        self.usable = True
+        self._mdu = mdu
+        self._rtt = rtt
+        self._usable = True
         self.receipts = []
+        self.packet_callback: Callable[[rnsh.protocol.MessageOutletBase, bytes], None] | None = None
 
-    def timeout_callback(self):
+    def send(self, raw: bytes) -> Receipt:
+        receipt = Receipt(rnsh.protocol.MessageState.MSGSTATE_SENT, raw)
+        self.receipts.append(receipt)
+        return receipt
+
+    def set_packet_received_callback(self, cb: Callable[[rnsh.protocol.MessageOutletBase, bytes], None]):
+        self.packet_callback = cb
+
+    def receive(self, raw: bytes):
+        if self.packet_callback:
+            self.packet_callback(self, raw)
+
+    @property
+    def mdu(self):
+        return self._mdu
+
+    @property
+    def rtt(self):
+        return self._rtt
+
+    @property
+    def is_usuable(self):
+        return self._usable
+
+    def get_receipt_state(self, receipt: Receipt) -> MessageState:
+        return receipt.state
+
+    def timed_out(self):
         self.timeout_callbacks += 1
 
     def __str__(self):
         return str(self.link_id)
 
 
-class Receipt:
-    def __init__(self, link: Link, state: rnsh.protocol.MessageState, raw: bytes):
-        self.state = state
-        self.raw = raw
-        self.link = link
-
-
 class ProtocolHarness(contextlib.AbstractContextManager):
     def __init__(self, retry_delay_min: float = 1):
         self._log = module_logger.getChild(self.__class__.__name__)
-        self.messenger = rnsh.protocol.Messenger(receipt_checker=self.receipt_checker,
-                                                 link_timeout_callback=self.link_timeout_callback,
-                                                 link_mdu_getter=self.link_mdu_getter,
-                                                 link_rtt_getter=self.link_rtt_getter,
-                                                 link_usable_getter=self.link_usable_getter,
-                                                 packet_sender=self.packet_sender,
-                                                 retry_delay_min=retry_delay_min)
-
-    def packet_sender(self, link: Link, raw: bytes) -> Receipt:
-        receipt = Receipt(link, rnsh.protocol.MessageState.MSGSTATE_SENT, raw)
-        link.receipts.append(receipt)
-        return receipt
-
-    @staticmethod
-    def link_mdu_getter(link: Link):
-        return link.mdu
-
-    @staticmethod
-    def link_rtt_getter(link: Link):
-        return link.rtt
-
-    @staticmethod
-    def link_usable_getter(link: Link):
-        return link.usable
-
-    @staticmethod
-    def receipt_checker(receipt: Receipt) -> rnsh.protocol.MessageState:
-        return receipt.state
-
-    @staticmethod
-    def link_timeout_callback(link: Link):
-        link.timeout_callback()
+        self.messenger = rnsh.protocol.Messenger(retry_delay_min=retry_delay_min)
 
     def cleanup(self):
         self.messenger.shutdown()
@@ -83,49 +83,58 @@ class ProtocolHarness(contextlib.AbstractContextManager):
         return False
 
 
-def test_mdu():
-    with ProtocolHarness() as h:
-        mdu = 500
-        link = Link(mdu=mdu, rtt=0.25)
-        assert h.messenger.get_mdu(link) == mdu - 4
-        link.mdu = mdu = 600
-        assert h.messenger.get_mdu(link) == mdu - 4
-
-
-def test_rtt():
-    with ProtocolHarness() as h:
-        rtt = 0.25
-        link = Link(mdu=500, rtt=rtt)
-        assert h.messenger.get_rtt(link) == rtt
-
-
 def test_send_one_retry():
     rtt = 0.001
     retry_interval = rtt * 150
     message_content = b'Test'
     with ProtocolHarness(retry_delay_min=retry_interval) as h:
-        link = Link(mdu=500, rtt=rtt)
+        outlet = MessageOutletTest(mdu=500, rtt=rtt)
         message = rnsh.protocol.StreamDataMessage(stream_id=rnsh.protocol.StreamDataMessage.STREAM_ID_STDIN,
                                                   data=message_content, eof=True)
-        assert len(link.receipts) == 0
-        h.messenger.send_message(link, message)
+        assert len(outlet.receipts) == 0
+        h.messenger.send(outlet, message)
         assert message.tracked
         assert message.raw is not None
-        assert len(link.receipts) == 1
-        receipt = link.receipts[0]
+        assert len(outlet.receipts) == 1
+        receipt = outlet.receipts[0]
         assert receipt.state == rnsh.protocol.MessageState.MSGSTATE_SENT
         assert receipt.raw == message.raw
         time.sleep(retry_interval * 1.5)
-        assert len(link.receipts) == 1
+        assert len(outlet.receipts) == 1
         receipt.state = rnsh.protocol.MessageState.MSGSTATE_FAILED
         module_logger.info("set failed")
         time.sleep(retry_interval)
-        assert len(link.receipts) == 2
-        receipt = link.receipts[1]
+        assert len(outlet.receipts) == 2
+        receipt = outlet.receipts[1]
         assert receipt.state == rnsh.protocol.MessageState.MSGSTATE_SENT
         receipt.state = rnsh.protocol.MessageState.MSGSTATE_DELIVERED
         time.sleep(retry_interval)
-        assert len(link.receipts) == 2
+        assert len(outlet.receipts) == 2
+        assert not message.tracked
+
+
+def test_send_timeout():
+    rtt = 0.001
+    retry_interval = rtt * 150
+    message_content = b'Test'
+    with ProtocolHarness(retry_delay_min=retry_interval) as h:
+        outlet = MessageOutletTest(mdu=500, rtt=rtt)
+        message = rnsh.protocol.StreamDataMessage(stream_id=rnsh.protocol.StreamDataMessage.STREAM_ID_STDIN,
+                                                  data=message_content, eof=True)
+        assert len(outlet.receipts) == 0
+        h.messenger.send(outlet, message)
+        assert message.tracked
+        assert message.raw is not None
+        assert len(outlet.receipts) == 1
+        receipt = outlet.receipts[0]
+        assert receipt.state == rnsh.protocol.MessageState.MSGSTATE_SENT
+        assert receipt.raw == message.raw
+        time.sleep(retry_interval * 1.5)
+        assert outlet.timeout_callbacks == 0
+        time.sleep(retry_interval * 7)
+        assert len(outlet.receipts) == 1
+        assert outlet.timeout_callbacks == 1
+        assert receipt.state == rnsh.protocol.MessageState.MSGSTATE_SENT
         assert not message.tracked
 
 
@@ -133,24 +142,32 @@ def eat_own_dog_food(message: rnsh.protocol.Message, checker: typing.Callable[[r
     rtt = 0.001
     retry_interval = rtt * 150
     with ProtocolHarness(retry_delay_min=retry_interval) as h:
-        link = Link(mdu=500, rtt=rtt)
-        assert len(link.receipts) == 0
-        h.messenger.send_message(link, message)
+
+        decoded: [rnsh.protocol.Message] = []
+        def packet(outlet, buffer):
+            decoded.append(h.messenger.receive(buffer))
+
+        outlet = MessageOutletTest(mdu=500, rtt=rtt)
+        outlet.set_packet_received_callback(packet)
+        assert len(outlet.receipts) == 0
+        h.messenger.send(outlet, message)
         assert message.tracked
         assert message.raw is not None
-        assert len(link.receipts) == 1
-        receipt = link.receipts[0]
+        assert len(outlet.receipts) == 1
+        receipt = outlet.receipts[0]
         assert receipt.state == rnsh.protocol.MessageState.MSGSTATE_SENT
         assert receipt.raw == message.raw
         module_logger.info("set delivered")
         receipt.state = rnsh.protocol.MessageState.MSGSTATE_DELIVERED
         time.sleep(retry_interval * 2)
-        assert len(link.receipts) == 1
+        assert len(outlet.receipts) == 1
         assert receipt.state == rnsh.protocol.MessageState.MSGSTATE_DELIVERED
         assert not message.tracked
         module_logger.info("injecting rx message")
-        h.messenger.inbound(message.raw)
-        rx_message = h.messenger.poll_inbound(block=False)
+        assert len(decoded) == 0
+        outlet.receive(message.raw)
+        assert len(decoded) == 1
+        rx_message = decoded[0]
         assert rx_message is not None
         assert isinstance(rx_message, message.__class__)
         assert rx_message.msgid != message.msgid
@@ -234,6 +251,16 @@ def test_send_receive_error():
         assert rx_message.msg == message.msg
         assert rx_message.fatal == message.fatal
         assert rx_message.data == message.data
+
+    eat_own_dog_food(message, check)
+
+
+def test_send_receive_cmdexit():
+    message = rnsh.protocol.CommandExitedMessage(5)
+
+    def check(rx_message: rnsh.protocol.Message):
+        assert isinstance(rx_message, message.__class__)
+        assert rx_message.return_code == message.return_code
 
     eat_own_dog_food(message, check)
 

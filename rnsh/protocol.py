@@ -15,6 +15,7 @@ import abc
 import contextlib
 import struct
 import logging as __logging
+from abc import ABC, abstractmethod
 
 module_logger = __logging.getLogger(__name__)
 
@@ -22,11 +23,48 @@ module_logger = __logging.getLogger(__name__)
 _TReceipt = TypeVar("_TReceipt")
 _TLink = TypeVar("_TLink")
 MSG_MAGIC = 0xac
-PROTOCOL_VERSION=1
+PROTOCOL_VERSION = 1
 
 
 def _make_MSGTYPE(val: int):
     return ((MSG_MAGIC << 8) & 0xff00) | (val & 0x00ff)
+
+
+class MessageOutletBase(ABC):
+    @abstractmethod
+    def send(self, raw: bytes) -> _TReceipt:
+        raise NotImplemented()
+
+    @property
+    @abstractmethod
+    def mdu(self):
+        raise NotImplemented()
+
+    @property
+    @abstractmethod
+    def rtt(self):
+        raise NotImplemented()
+
+    @property
+    @abstractmethod
+    def is_usuable(self):
+        raise NotImplemented()
+
+    @abstractmethod
+    def get_receipt_state(self, receipt: _TReceipt) -> MessageState:
+        raise NotImplemented()
+
+    @abstractmethod
+    def timed_out(self):
+        raise NotImplemented()
+
+    @abstractmethod
+    def __str__(self):
+        raise NotImplemented()
+
+    @abstractmethod
+    def set_packet_received_callback(self, cb: Callable[[MessageOutletBase, bytes], None]):
+        raise NotImplemented()
 
 
 class METype(enum.IntEnum):
@@ -58,17 +96,17 @@ class Message(abc.ABC):
         self.msgid = uuid.uuid4()
         self.raw: bytes | None = None
         self.receipt: _TReceipt = None
-        self.link: _TLink = None
+        self.outlet: _TLink = None
         self.tracked: bool = False
 
     def __str__(self):
         return f"{self.__class__.__name__} {self.msgid}"
 
-    @abc.abstractmethod
+    @abstractmethod
     def pack(self) -> bytes:
         raise NotImplemented()
 
-    @abc.abstractmethod
+    @abstractmethod
     def unpack(self, raw):
         raise NotImplemented()
 
@@ -124,7 +162,8 @@ class ExecuteCommandMesssage(Message):
     MSGTYPE = _make_MSGTYPE(3)
 
     def __init__(self, cmdline: [str] = None, pipe_stdin: bool = False, pipe_stdout: bool = False,
-                 pipe_stderr: bool = False, tcflags: [any] = None, term: str | None = None):
+                 pipe_stderr: bool = False, tcflags: [any] = None, term: str | None = None, rows: int = None,
+                 cols: int = None, hpix: int = None, vpix: int = None):
         super().__init__()
         self.cmdline = cmdline
         self.pipe_stdin = pipe_stdin
@@ -132,16 +171,20 @@ class ExecuteCommandMesssage(Message):
         self.pipe_stderr = pipe_stderr
         self.tcflags = tcflags
         self.term = term
+        self.rows = rows
+        self.cols = cols
+        self.hpix = hpix
+        self.vpix = vpix
 
     def pack(self) -> bytes:
         raw = umsgpack.packb((self.cmdline, self.pipe_stdin, self.pipe_stdout, self.pipe_stderr,
-                              self.tcflags, self.term))
+                              self.tcflags, self.term, self.rows, self.cols, self.hpix, self.vpix))
         return self.wrap_MSGTYPE(raw)
 
     def unpack(self, raw):
         raw = self.unwrap_MSGTYPE(raw)
-        self.cmdline, self.pipe_stdin, self.pipe_stdout, self.pipe_stderr, self.tcflags, self.term \
-            = umsgpack.unpackb(raw)
+        self.cmdline, self.pipe_stdin, self.pipe_stdout, self.pipe_stderr, self.tcflags, self.term, self.rows, \
+            self.cols, self.hpix, self.vpix = umsgpack.unpackb(raw)
 
 class StreamDataMessage(Message):
     MSGTYPE = _make_MSGTYPE(4)
@@ -156,7 +199,7 @@ class StreamDataMessage(Message):
         self.eof = eof
 
     def pack(self) -> bytes:
-        raw = umsgpack.packb((self.stream_id, self.eof, self.data))
+        raw = umsgpack.packb((self.stream_id, self.eof, bytes(self.data)))
         return self.wrap_MSGTYPE(raw)
 
     def unpack(self, raw):
@@ -169,7 +212,7 @@ class VersionInfoMessage(Message):
 
     def __init__(self, sw_version: str = None):
         super().__init__()
-        self.sw_version = sw_version
+        self.sw_version = sw_version or rnsh.__version__
         self.protocol_version = PROTOCOL_VERSION
 
     def pack(self) -> bytes:
@@ -199,6 +242,22 @@ class ErrorMessage(Message):
         self.msg, self.fatal, self.data = umsgpack.unpackb(raw)
 
 
+class CommandExitedMessage(Message):
+    MSGTYPE = _make_MSGTYPE(7)
+
+    def __init__(self, return_code: int = None):
+        super().__init__()
+        self.return_code = return_code
+
+    def pack(self) -> bytes:
+        raw = umsgpack.packb(self.return_code)
+        return self.wrap_MSGTYPE(raw)
+
+    def unpack(self, raw: bytes):
+        raw = self.unwrap_MSGTYPE(raw)
+        self.return_code = umsgpack.unpackb(raw)
+
+
 class Messenger(contextlib.AbstractContextManager):
 
     @staticmethod
@@ -208,29 +267,16 @@ class Messenger(contextlib.AbstractContextManager):
             subclass_tuples.append((subclass.MSGTYPE, subclass))
         return subclass_tuples
 
-    def __init__(self, receipt_checker: Callable[[_TReceipt], MessageState],
-                 link_timeout_callback: Callable[[_TLink], None],
-                 link_mdu_getter: Callable[[_TLink], int],
-                 link_rtt_getter: Callable[[_TLink], float],
-                 link_usable_getter: Callable[[_TLink], bool],
-                 packet_sender: Callable[[_TLink, bytes], _TReceipt],
-                 retry_delay_min: float = 10.0):
+    def __init__(self, retry_delay_min: float = 10.0):
         self._log = module_logger.getChild(self.__class__.__name__)
-        self._receipt_checker = receipt_checker
-        self._link_timeout_callback = link_timeout_callback
-        self._link_mdu_getter = link_mdu_getter
-        self._link_rtt_getter = link_rtt_getter
-        self._link_usable_getter = link_usable_getter
-        self._packet_sender = packet_sender
         self._sent_messages: list[Message] = []
         self._lock = threading.RLock()
         self._retry_timer = rnsh.retry.RetryThread()
         self._message_factories = dict(self.__class__._get_msg_constructors())
-        self._inbound_queue = queue.Queue()
         self._retry_delay_min = retry_delay_min
 
-    def __enter__(self):
-        pass
+    def __enter__(self) -> Messenger:
+        return self
 
     def __exit__(self, __exc_type: Type[BaseException] | None, __exc_value: BaseException | None,
                  __traceback: TracebackType | None) -> bool | None:
@@ -238,39 +284,38 @@ class Messenger(contextlib.AbstractContextManager):
         return False
 
     def shutdown(self):
-        self._run = False
         self._retry_timer.close()
 
-    def inbound(self, raw: bytes):
+    def clear_retries(self, outlet):
+        self._retry_timer.complete(outlet)
+
+    def receive(self, raw: bytes) -> Message:
         (mid, contents) = Message.static_unwrap_MSGTYPE(raw)
         ctor = self._message_factories.get(mid, None)
         if ctor is None:
             raise MessagingException(METype.ME_NOT_REGISTERED, f"unable to find constructor for message type {hex(mid)}")
         message = ctor()
         message.unpack(raw)
-        self._log.debug("Message received: {message}")
-        self._inbound_queue.put(message)
+        self._log.debug(f"Message received: {message}")
+        return message
 
-    def get_mdu(self, link: _TLink) -> int:
-        return self._link_mdu_getter(link) - 4
-
-    def get_rtt(self, link: _TLink) -> float:
-        return self._link_rtt_getter(link)
-
-    def is_link_ready(self, link: _TLink) -> bool:
-        if not self._link_usable_getter(link):
+    def is_outlet_ready(self, outlet: MessageOutletBase) -> bool:
+        if not outlet.is_usuable:
+            self._log.debug("is_outlet_ready outlet unusable")
             return False
 
         with self._lock:
             for message in self._sent_messages:
-                if message.link == link:
+                if message.outlet == outlet and message.tracked and message.receipt \
+                        and outlet.get_receipt_state(message.receipt) == MessageState.MSGSTATE_SENT:
+                    self._log.debug("is_outlet_ready pending message found")
                     return False
         return True
 
-    def send_message(self, link: _TLink, message: Message):
+    def send(self, outlet: MessageOutletBase, message: Message):
         with self._lock:
-            if not self.is_link_ready(link):
-                raise MessagingException(METype.ME_LINK_NOT_READY, f"link {link} not ready")
+            if not self.is_outlet_ready(outlet):
+                raise MessagingException(METype.ME_LINK_NOT_READY, f"link {outlet} not ready")
 
             if message in self._sent_messages:
                 raise MessagingException(METype.ME_ALREADY_SENT)
@@ -279,43 +324,36 @@ class Messenger(contextlib.AbstractContextManager):
 
         if not message.raw:
             message.raw = message.pack()
-        message.link = link
+        message.outlet = outlet
 
-        def send(tag: any, tries: int):
-            state = MessageState.MSGSTATE_NEW if not message.receipt else self._receipt_checker(message.receipt)
+        def send_inner(tag: any, tries: int):
+            state = MessageState.MSGSTATE_NEW if not message.receipt else outlet.get_receipt_state(message.receipt)
             if state in [MessageState.MSGSTATE_NEW, MessageState.MSGSTATE_FAILED]:
                 try:
                     self._log.debug(f"Sending packet for {message}")
-                    message.receipt = self._packet_sender(link, message.raw)
+                    message.receipt = outlet.send(message.raw)
                 except Exception as ex:
                     self._log.exception(f"Error sending message {message}")
             elif state in [MessageState.MSGSTATE_SENT]:
                 self._log.debug(f"Retry skipped, message still pending {message}")
             elif state in [MessageState.MSGSTATE_DELIVERED]:
                 latency = round(time.time() - message.ts, 1)
-                self._log.debug(f"Message delivered {message.msgid} after {tries-1} tries/{latency} seconds")
+                self._log.debug(f"{message} delivered {message.msgid} after {tries-1} tries/{latency} seconds")
                 with self._lock:
                     self._sent_messages.remove(message)
                     message.tracked = False
-                self._retry_timer.complete(link)
-            return link
+                self._retry_timer.complete(outlet)
+            return outlet
 
         def timeout(tag: any, tries: int):
             latency = round(time.time() - message.ts, 1)
-            msg = "delivered" if message.receipt and self._receipt_checker(message.receipt) == MessageState.MSGSTATE_DELIVERED else "retry timeout"
+            msg = "delivered" if message.receipt and outlet.get_receipt_state(message.receipt) == MessageState.MSGSTATE_DELIVERED else "retry timeout"
             self._log.debug(f"Message {msg} {message} after {tries} tries/{latency} seconds")
             with self._lock:
                 self._sent_messages.remove(message)
                 message.tracked = False
-            self._link_timeout_callback(link)
+            outlet.timed_out()
 
-        rtt = self._link_rtt_getter(link)
-        self._retry_timer.begin(5, min(rtt * 100, max(rtt * 2, self._retry_delay_min)), send, timeout)
-
-    def poll_inbound(self, block: bool = True, timeout: float = None) -> Message | None:
-        try:
-            return self._inbound_queue.get(block=block, timeout=timeout)
-        except queue.Empty:
-            return None
-
+        rtt = outlet.rtt
+        self._retry_timer.begin(5, max(rtt * 5, self._retry_delay_min), send_inner, timeout)
 

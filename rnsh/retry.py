@@ -79,7 +79,7 @@ class RetryThread(AbstractContextManager):
         self._lock = threading.RLock()
         self._run = True
         self._finished: asyncio.Future = None
-        self._thread = threading.Thread(name=name, target=self._thread_run)
+        self._thread = threading.Thread(name=name, target=self._thread_run, daemon=True)
         self._thread.start()
 
     def is_alive(self):
