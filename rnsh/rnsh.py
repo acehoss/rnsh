@@ -45,7 +45,6 @@ import rnsh.exception as exception
 import rnsh.process as process
 import rnsh.retry as retry
 import rnsh.rnslogging as rnslogging
-import rnsh.hacks as hacks
 import rnsh.session as session
 import re
 import contextlib

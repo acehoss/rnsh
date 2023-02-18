@@ -9,7 +9,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.9"
 docopt = "^0.6.2"
-rns = "^0.4.8"
+rns = "^0.4.9"
 tomli = "^2.0.1"
 
 [tool.poetry.scripts]
