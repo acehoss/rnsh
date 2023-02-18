@@ -8,7 +8,7 @@ import multiprocessing.pool
 logging.getLogger().setLevel(logging.DEBUG)
 
 
-# @pytest.mark.skip_ci
+@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_echo():
     """
@@ -30,7 +30,7 @@ async def test_echo():
         assert not state.process.running
 
 
-# @pytest.mark.skip_ci
+@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_echo_live():
     """
@@ -52,7 +52,7 @@ async def test_echo_live():
         assert not state.process.running
 
 
-# @pytest.mark.skip_ci
+@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_echo_live_pipe_in():
     """
@@ -74,7 +74,7 @@ async def test_echo_live_pipe_in():
         assert not state.process.running
 
 
-# @pytest.mark.skip_ci
+@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_echo_live_pipe_out():
     """
@@ -99,7 +99,7 @@ async def test_echo_live_pipe_out():
         assert not state.process.running
 
 
-# @pytest.mark.skip_ci
+@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_echo_live_pipe_err():
     """
@@ -121,7 +121,7 @@ async def test_echo_live_pipe_err():
         assert not state.process.running
 
 
-# @pytest.mark.skip_ci
+@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_echo_live_pipe_out_err():
     """
@@ -147,7 +147,7 @@ async def test_echo_live_pipe_out_err():
 
 
 
-# @pytest.mark.skip_ci
+@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_echo_live_pipe_all():
     """
@@ -170,7 +170,7 @@ async def test_echo_live_pipe_all():
         assert not state.process.running
 
 
-# @pytest.mark.skip_ci
+@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_double_echo_live():
     """

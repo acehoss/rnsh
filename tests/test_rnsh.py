@@ -62,7 +62,8 @@ async def get_id_and_dest(td: str) -> tuple[str, str]:
         await asyncio.sleep(0.1)
         assert wrapper.process.running
         # wait for process to start up
-        await asyncio.sleep(3)
+        await tests.helpers.wait_for_condition_async(lambda: not wrapper.process.running, 5)
+        assert not wrapper.process.running
         # read the output
         text = wrapper.read().decode("utf-8").replace("\r", "").replace("\n", "")
         assert text.index("Identity") is not None
@@ -73,7 +74,6 @@ async def get_id_and_dest(td: str) -> tuple[str, str]:
         dh = match.group(2)
         assert len(dh) == 32
         await asyncio.sleep(0.1)
-        assert not wrapper.process.running
         return ih, dh
 
 

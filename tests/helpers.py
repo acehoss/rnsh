@@ -1,4 +1,5 @@
 import logging
+import time
 import types
 import typing
 import tempfile
@@ -148,3 +149,15 @@ def test_config_and_cleanup():
         with pytest.raises(ValueError):
             filedata.index("22222")
     assert not os.path.exists(os.path.join(td, "config"))
+
+
+def wait_for_condition(condition: callable, timeout: float):
+    tm = time.time() + timeout
+    while tm > time.time() and not condition():
+        time.sleep(0.01)
+
+
+async def wait_for_condition_async(condition: callable, timeout: float):
+    tm = time.time() + timeout
+    while tm > time.time() and not condition():
+        await asyncio.sleep(0.01)
