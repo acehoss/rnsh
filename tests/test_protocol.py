@@ -22,6 +22,8 @@ class Receipt:
     def __init__(self, state: rnsh.protocol.MessageState, raw: bytes):
         self.state = state
         self.raw = raw
+        self.msgid = uuid.uuid4()
+        self.tries = 1
 
 
 class MessageOutletTest(rnsh.protocol.MessageOutletBase):
@@ -37,6 +39,11 @@ class MessageOutletTest(rnsh.protocol.MessageOutletBase):
     def send(self, raw: bytes) -> Receipt:
         receipt = Receipt(rnsh.protocol.MessageState.MSGSTATE_SENT, raw)
         self.receipts.append(receipt)
+        return receipt
+
+    def resend(self, receipt: Receipt) -> Receipt:
+        receipt.tries += 1
+        receipt.state = rnsh.protocol.MessageState.MSGSTATE_SENT
         return receipt
 
     def set_packet_received_callback(self, cb: Callable[[rnsh.protocol.MessageOutletBase, bytes], None]):
@@ -104,12 +111,13 @@ def test_send_one_retry():
         receipt.state = rnsh.protocol.MessageState.MSGSTATE_FAILED
         module_logger.info("set failed")
         time.sleep(retry_interval)
-        assert len(outlet.receipts) == 2
-        receipt = outlet.receipts[1]
+        assert len(outlet.receipts) == 1
+        assert receipt == outlet.receipts[0]
         assert receipt.state == rnsh.protocol.MessageState.MSGSTATE_SENT
+        assert receipt.tries == 2
         receipt.state = rnsh.protocol.MessageState.MSGSTATE_DELIVERED
         time.sleep(retry_interval)
-        assert len(outlet.receipts) == 2
+        assert len(outlet.receipts) == 1
         assert not message.tracked
 
 

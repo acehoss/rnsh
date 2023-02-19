@@ -377,10 +377,14 @@ class RNSOutlet(LSOutletBase):
     def teardown(self):
         self.link.teardown()
 
-    def send(self, raw: bytes) -> RNS.PacketReceipt:
+    def send(self, raw: bytes) -> RNS.Packet:
         packet = RNS.Packet(self.link, raw)
         packet.send()
-        return packet.receipt
+        return packet
+
+    def resend(self, packet: RNS.Packet) -> RNS.Packet:
+        packet.resend()
+        return packet
 
     @property
     def mdu(self) -> int:
@@ -394,8 +398,8 @@ class RNSOutlet(LSOutletBase):
     def is_usuable(self):
         return True #self.link.status in [RNS.Link.ACTIVE]
 
-    def get_receipt_state(self, receipt: RNS.PacketReceipt) -> MessageState:
-        status = receipt.get_status()
+    def get_receipt_state(self, packet: RNS.Packet) -> MessageState:
+        status = packet.receipt.get_status()
         if status == RNS.PacketReceipt.SENT:
             return protocol.MessageState.MSGSTATE_SENT
         if status == RNS.PacketReceipt.DELIVERED:

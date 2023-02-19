@@ -35,6 +35,10 @@ class MessageOutletBase(ABC):
     def send(self, raw: bytes) -> _TReceipt:
         raise NotImplemented()
 
+    @abstractmethod
+    def resend(self, receipt: _TReceipt) -> _TReceipt:
+        raise NotImplemented()
+
     @property
     @abstractmethod
     def mdu(self):
@@ -330,8 +334,12 @@ class Messenger(contextlib.AbstractContextManager):
             state = MessageState.MSGSTATE_NEW if not message.receipt else outlet.get_receipt_state(message.receipt)
             if state in [MessageState.MSGSTATE_NEW, MessageState.MSGSTATE_FAILED]:
                 try:
-                    self._log.debug(f"Sending packet for {message}")
-                    message.receipt = outlet.send(message.raw)
+                    if message.receipt:
+                        self._log.debug(f"Resending packet for {message}")
+                        message.receipt = outlet.resend(message.receipt)
+                    else:
+                        self._log.debug(f"Sending packet for {message}")
+                        message.receipt = outlet.send(message.raw)
                 except Exception as ex:
                     self._log.exception(f"Error sending message {message}")
             elif state in [MessageState.MSGSTATE_SENT]:
