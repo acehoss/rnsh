@@ -9,14 +9,6 @@ sessions over [Reticulum](https://reticulum.network) networks.
 It is based on the `rnx` utility that ships with Reticulum and
 aims to provide a similar experience to SSH.
 
-`rnsh` is still a little raw; there are some things that are 
-implemented badly, and many other things that haven't been 
-built at all (yet). Signals (i.e. Ctrl-C) need some work, so have
-another terminal handy to send a SIGTERM if things glitch
-out.
-
-Anyway, there's a lot of room for improvement.
-
 ## Contents
 
 - [Alpha Disclaimer](#reminder--alpha-software)
@@ -34,6 +26,14 @@ There will sometimes be breaking changes in the protocol between
 releases. Use at your own peril!
 
 ## Recent Changes
+### v0.0.10
+- Rate limit window change events to prevent saturation of transport
+- Tweaked some loop timers to improve CPU utilization
+
+### v0.0.9
+- Switch to a new packet-based protocol
+- Bug fixes and dependency updates
+
 ### v0.0.8
 - Improved test suite exposed several issues with the handling of
 command line arguments which are now fixed
