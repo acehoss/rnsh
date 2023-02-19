@@ -187,9 +187,11 @@ class ListenerSession:
         self._set_state(LSState.LSSTATE_WAIT_VERS)
 
     @classmethod
-    async def pump_all(cls):
+    async def pump_all(cls) -> True:
+        processed_any = False
         for session in cls.sessions:
-            session.pump()
+            processed = session.pump()
+            processed_any = processed_any or processed
             await asyncio.sleep(0)
 
 
@@ -199,13 +201,12 @@ class ListenerSession:
             session.terminate(reason)
             await asyncio.sleep(0)
 
-    def pump(self):
-
+    def pump(self) -> bool:
         try:
             if self.state != LSState.LSSTATE_RUNNING:
-                return
+                return False
             elif not self.messenger.is_outlet_ready(self.outlet):
-                return
+                return False
             elif len(self.stderr_buf) > 0:
                 mdu = self.outlet.mdu - 16
                 data = self.stderr_buf[:mdu]
@@ -217,6 +218,7 @@ class ListenerSession:
                 self.send(msg)
                 if send_eof:
                     self.stderr_eof_sent = True
+                return True
             elif len(self.stdout_buf) > 0:
                 mdu = self.outlet.mdu - 16
                 data = self.stdout_buf[:mdu]
@@ -226,6 +228,9 @@ class ListenerSession:
                 msg = protocol.StreamDataMessage(protocol.StreamDataMessage.STREAM_ID_STDOUT,
                                                  data, send_eof)
                 self.send(msg)
+                if send_eof:
+                    self.stdout_eof_sent = True
+                return True
             elif self.return_code is not None and not self.return_code_sent:
                 msg = protocol.CommandExitedMessage(self.return_code)
                 self.send(msg)
@@ -233,8 +238,10 @@ class ListenerSession:
                 self._call(functools.partial(self._check_protocol_timeout,
                                              lambda: self.state == LSState.LSSTATE_RUNNING, "CommandExitedMessage"),
                            max(self.outlet.rtt * 5, 10))
+                return False
         except Exception as ex:
             self._log.exception("Error during pump", ex)
+        return False
 
     def _terminate_process(self):
         with contextlib.suppress(Exception):

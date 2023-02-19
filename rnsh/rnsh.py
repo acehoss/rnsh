@@ -201,8 +201,9 @@ async def _listen(configdir, command, identitypath=None, service_name="default",
                 last_announce = time.time()
                 _destination.announce()
             if len(session.ListenerSession.sessions) > 0:
-                await session.ListenerSession.pump_all()
-                await sleeper.sleep_async()
+                # no sleep if there's work to do
+                if not await session.ListenerSession.pump_all():
+                    await sleeper.sleep_async()
             else:
                 await asyncio.sleep(0.25)
     finally:
@@ -426,12 +427,13 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
         sent_eof = False
         last_winch = time.time()
         sleeper = helpers.SleepRate(0.01)
+        processed = False
         while not await _check_finished() and state in [InitiatorState.IS_RUNNING]:
             try:
                 try:
-                    packet = _pq.get(timeout=sleeper.next_sleep_time())
+                    packet = _pq.get(timeout=sleeper.next_sleep_time() if not processed else 0.0005)
                     message = messenger.receive(packet)
-
+                    processed = True
                     if isinstance(message, protocol.StreamDataMessage):
                         if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDOUT:
                             if message.data and len(message.data) > 0:
@@ -461,7 +463,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
                             return 200
 
                 except queue.Empty:
-                    pass
+                    processed = False
 
                 if messenger.is_outlet_ready(outlet):
                     stdin = data_buffer[:mdu]
@@ -471,6 +473,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
                         messenger.send(outlet, protocol.StreamDataMessage(protocol.StreamDataMessage.STREAM_ID_STDIN,
                                                                           stdin, eof))
                         sent_eof = eof
+                        processed = True
 
                 # send window change, but rate limited
                 if winch and time.time() - last_winch > _link.rtt * 25:
@@ -479,6 +482,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
                     with contextlib.suppress(Exception):
                         r, c, h, v = process.tty_get_winsize(0)
                         messenger.send(outlet, protocol.WindowSizeMessage(r, c, h, v))
+                        processed = True
             except RemoteExecutionError as e:
                 print(e.msg)
                 return 255
