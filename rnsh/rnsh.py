@@ -51,6 +51,7 @@ import contextlib
 import rnsh.args
 import pwd
 import rnsh.protocol as protocol
+import rnsh.helpers as helpers
 
 module_logger = __logging.getLogger(__name__)
 
@@ -191,15 +192,19 @@ async def _listen(configdir, command, identitypath=None, service_name="default",
     if announce_period is not None:
         _destination.announce()
 
-    last = time.time()
+    last_announce = time.time()
+    sleeper = helpers.SleepRate(0.01)
 
     try:
         while not await _check_finished():
-            if announce_period and 0 < announce_period < time.time() - last:
-                last = time.time()
+            if announce_period and 0 < announce_period < time.time() - last_announce:
+                last_announce = time.time()
                 _destination.announce()
-            await session.ListenerSession.pump_all()
-            await asyncio.sleep(0.01)
+            if len(session.ListenerSession.sessions) > 0:
+                await session.ListenerSession.pump_all()
+                await sleeper.sleep_async()
+            else:
+                await asyncio.sleep(0.25)
     finally:
         log.warning("Shutting down")
         await session.ListenerSession.terminate_all("Shutting down")
@@ -416,17 +421,15 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
                                                                hpix=hpix,
                                                                vpix=vpix))
 
-
-
-
         loop.add_signal_handler(signal.SIGWINCH, sigwinch_handler)
         mdu = _link.MDU - 16
         sent_eof = False
-
+        last_winch = time.time()
+        sleeper = helpers.SleepRate(0.01)
         while not await _check_finished() and state in [InitiatorState.IS_RUNNING]:
             try:
                 try:
-                    packet = _pq.get_nowait()
+                    packet = _pq.get(timeout=sleeper.next_sleep_time())
                     message = messenger.receive(packet)
 
                     if isinstance(message, protocol.StreamDataMessage):
@@ -468,6 +471,14 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
                         messenger.send(outlet, protocol.StreamDataMessage(protocol.StreamDataMessage.STREAM_ID_STDIN,
                                                                           stdin, eof))
                         sent_eof = eof
+
+                # send window change, but rate limited
+                if winch and time.time() - last_winch > _link.rtt * 25:
+                    last_winch = time.time()
+                    winch = False
+                    with contextlib.suppress(Exception):
+                        r, c, h, v = process.tty_get_winsize(0)
+                        messenger.send(outlet, protocol.WindowSizeMessage(r, c, h, v))
             except RemoteExecutionError as e:
                 print(e.msg)
                 return 255
@@ -478,7 +489,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
                     return 127
 
             # await process.event_wait_any([_new_data, _finished], timeout=min(max(rtt * 50, 5), 120))
-            await asyncio.sleep(0.01)
+            # await sleeper.sleep_async()
         log.debug("after main loop")
         return 0
 
