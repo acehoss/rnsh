@@ -26,6 +26,12 @@ There will sometimes be breaking changes in the protocol between
 releases. Use at your own peril!
 
 ## Recent Changes
+### v0.0.11
+- Event loop bursting improves throughput and CPU utilization on
+  both listener and initiator.
+- Packet retries use RNS resend feature to prevent duplicate
+  packets.
+
 ### v0.0.10
 - Rate limit window change events to prevent saturation of transport
 - Tweaked some loop timers to improve CPU utilization
