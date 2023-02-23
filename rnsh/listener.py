@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+
+# MIT License
+#
+# Copyright (c) 2016-2022 Mark Qvist / unsigned.io
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import enum
+import functools
+import importlib.metadata
+import logging as __logging
+import os
+import queue
+import shlex
+import signal
+import sys
+import termios
+import threading
+import time
+import tty
+from typing import Callable, TypeVar
+import RNS
+import rnsh.exception as exception
+import rnsh.process as process
+import rnsh.retry as retry
+import rnsh.rnslogging as rnslogging
+import rnsh.session as session
+import re
+import contextlib
+import rnsh.args
+import pwd
+import rnsh.protocol as protocol
+import rnsh.helpers as helpers
+import rnsh.rnsh
+
+module_logger = __logging.getLogger(__name__)
+
+
+def _get_logger(name: str):
+    global module_logger
+    return module_logger.getChild(name)
+
+
+_identity = None
+_reticulum = None
+_allow_all = False
+_allowed_identity_hashes = []
+_cmd: [str] | None = None
+DATA_AVAIL_MSG = "data available"
+_finished: asyncio.Event = None
+_retry_timer: retry.RetryThread | None = None
+_destination: RNS.Destination | None = None
+_loop: asyncio.AbstractEventLoop | None = None
+_no_remote_command = True
+_remote_cmd_as_args = False
+
+
+async def _check_finished(timeout: float = 0):
+    return await process.event_wait(_finished, timeout=timeout)
+
+
+def _sigint_handler(sig, loop):
+    global _finished
+    log = _get_logger("_sigint_handler")
+    log.debug(signal.Signals(sig).name)
+    if _finished is not None:
+        _finished.set()
+    else:
+        raise KeyboardInterrupt()
+
+
+async def listen(configdir, command, identitypath=None, service_name=None, verbosity=0, quietness=0, allowed=None,
+                 disable_auth=None, announce_period=900, no_remote_command=True, remote_cmd_as_args=False,
+                 loop: asyncio.AbstractEventLoop = None):
+    global _identity, _allow_all, _allowed_identity_hashes, _reticulum, _cmd, _destination, _no_remote_command
+    global _remote_cmd_as_args, _finished
+    log = _get_logger("_listen")
+    if not loop:
+        loop = asyncio.get_running_loop()
+    if service_name is None or len(service_name) == 0:
+        service_name = "default"
+
+    log.info(f"Using service name {service_name}")
+
+
+    targetloglevel = RNS.LOG_INFO + verbosity - quietness
+    _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
+    rnslogging.RnsHandler.set_log_level_with_rns_level(targetloglevel)
+    _identity = rnsh.rnsh.prepare_identity(identitypath, service_name)
+    _destination = RNS.Destination(_identity, RNS.Destination.IN, RNS.Destination.SINGLE, rnsh.rnsh.APP_NAME)
+
+    _cmd = command
+    if _cmd is None or len(_cmd) == 0:
+        shell = None
+        try:
+            shell = pwd.getpwuid(os.getuid()).pw_shell
+        except Exception as e:
+            log.error(f"Error looking up shell: {e}")
+        log.info(f"Using {shell} for default command.")
+        _cmd = [shell] if shell else None
+    else:
+        log.info(f"Using command {shlex.join(_cmd)}")
+
+    _no_remote_command = no_remote_command
+    session.ListenerSession.allow_remote_command = not no_remote_command
+    _remote_cmd_as_args = remote_cmd_as_args
+    if (_cmd is None or len(_cmd) == 0 or _cmd[0] is None or len(_cmd[0]) == 0) \
+            and (_no_remote_command or _remote_cmd_as_args):
+        raise Exception(f"Unable to look up shell for {os.getlogin}, cannot proceed with -A or -C and no <program>.")
+
+    session.ListenerSession.default_command = _cmd
+    session.ListenerSession.remote_cmd_as_args = _remote_cmd_as_args
+
+    if disable_auth:
+        _allow_all = True
+        session.ListenerSession.allow_all = True
+    else:
+        if allowed is not None:
+            for a in allowed:
+                try:
+                    dest_len = (RNS.Reticulum.TRUNCATED_HASHLENGTH // 8) * 2
+                    if len(a) != dest_len:
+                        raise ValueError(
+                            "Allowed destination length is invalid, must be {hex} hexadecimal " +
+                            "characters ({byte} bytes).".format(
+                                hex=dest_len, byte=dest_len // 2))
+                    try:
+                        destination_hash = bytes.fromhex(a)
+                        _allowed_identity_hashes.append(destination_hash)
+                        session.ListenerSession.allowed_identity_hashes.append(destination_hash)
+                    except Exception:
+                        raise ValueError("Invalid destination entered. Check your input.")
+                except Exception as e:
+                    log.error(str(e))
+                    exit(1)
+
+    if len(_allowed_identity_hashes) < 1 and not disable_auth:
+        log.warning("Warning: No allowed identities configured, rnsh will not accept any connections!")
+
+    def link_established(lnk: RNS.Link):
+        session.ListenerSession(session.RNSOutlet.get_outlet(lnk), loop)
+    _destination.set_link_established_callback(link_established)
+
+    _finished = asyncio.Event()
+    signal.signal(signal.SIGINT, _sigint_handler)
+
+    log.info("rnsh listening for commands on " + RNS.prettyhexrep(_destination.hash))
+
+    if announce_period is not None:
+        _destination.announce()
+
+    last_announce = time.time()
+    sleeper = helpers.SleepRate(0.01)
+
+    try:
+        while not await _check_finished():
+            if announce_period and 0 < announce_period < time.time() - last_announce:
+                last_announce = time.time()
+                _destination.announce()
+            if len(session.ListenerSession.sessions) > 0:
+                # no sleep if there's work to do
+                if not await session.ListenerSession.pump_all():
+                    await sleeper.sleep_async()
+            else:
+                await asyncio.sleep(0.25)
+    finally:
+        log.warning("Shutting down")
+        await session.ListenerSession.terminate_all("Shutting down")
+        await asyncio.sleep(1)
+        session.ListenerSession.messenger.shutdown()
+        links_still_active = list(filter(lambda l: l.status != RNS.Link.CLOSED, _destination.links))
+        for link in links_still_active:
+            if link.status not in [RNS.Link.CLOSED]:
+                link.teardown()
+                await asyncio.sleep(0.01)

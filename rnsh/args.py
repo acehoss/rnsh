@@ -108,6 +108,10 @@ class Args:
             self.help = args.get("--help", None) or False
             self.command_line = [self.program] if self.program else []
             self.command_line.extend(self.program_args)
+        except docopt.DocoptExit:
+            print()
+            print(usage)
+            sys.exit(1)
         except Exception as e:
             print(f"Error parsing arguments: {e}")
             print()
