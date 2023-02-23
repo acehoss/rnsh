@@ -190,21 +190,62 @@ trying `/bin/zsh` or whatever your favorite shell is these
 days. The shell should start in login mode. Ideally it
 works just like an `ssh` shell session.
 
-### Protocol
-The protocol is build on top of the Reticulum `Request` and
-`Packet` APIs.
+## Protocol
+The protocol is build on top of the Reticulum `Packet` API.
+Application software sends and receives `Message` objects,
+which are encapsulated by `Packet` objects. Messages are
+(currently) sent one per packet, and only one packet is
+sent at a time (per link). The next packet is not sent until 
+the receiver proves the outstanding packet.
 
-- After the initiator identifies on the connection, it enters
-  a request loop. 
-- When idle, the initiator will periodically 
-  poll the listener. 
-- When the initiator has data available (i.e the user typed 
-  some characters), the initiator will send that data to the
-  listener in a request, and the listener will respond with 
-  any data available from the listener. 
-- When the listener has new data available, it notifies the 
-  initiator using a notification packet. The initiator then 
-  makes a request to the listener to fetch the data.
+A future update will work to allow a sliding window of
+outstanding packets to improve channel utilization.
+
+### Session Establishment
+1. Initiator establishes link. Listener session enters state 
+   `LSSTATE_WAIT_IDENT`, or `LSSTATE_WAIT_VERS` if running
+   with `--no-auth` option.
+
+2. Initiator identifies on link if not using `--no-id`.
+   - If using `--allowed-hash`, listener validates identity 
+      against configuration and if no match, sends a 
+      protocol error message and tears down link after prune
+      timer.
+3. Initiator transmits a `VersionInformationMessage`, which
+   is evaluated by the server for compatibility. If
+   incompatible, a protocol error is sent. 
+4. Listener responds with a `VersionInfoMessage` and enters 
+   state `LSSTATE_WAIT_CMD`
+5. Initiator evaluates the listener's version information
+   for compatibility and if incompatible, tears down link.
+6. Initiator sends an `ExecuteCommandMessage` (which could 
+   be an empty command) and enters the session event loop.
+7. Listener evaluates the command message against the
+   configured options such as `-A` or `-C` and responds
+   with a protocol error if not allowed.
+8. Listener starts the program. If success, the listener
+   enters the session event loop. If failure, responds
+   with a `CommandExitedMessage`.
+
+### Session Event Loop
+##### Listener state `LSSTATE_RUNNING`
+Process messages received from initiator.
+- `WindowSizeMessage`: set window size on child tty if appropriate
+- `StreamDataMessage`: binary data stream for child process;
+  streams ids 0, 1, 2 = stdin, stdout, stderr
+- `NoopMessage`: no operation - listener replies with `NoopMessage`
+- When link is torn down, child process is terminated if running and 
+  session destroyed
+- If command terminates, a `CommandExitedMessage` is sent and session
+  is pruned after an idle timeout.
+##### Initiator state `ISSTATE_RUNNING`
+Process messages received from listener.
+- `ErrorMessage`: print error, terminate link, and exit
+- `StreamDataMessage`: binary stream information; 
+   streams ids 0, 1, 2 = stdin, stdout, stderr
+- `CommandExitedMessage`: remote command exited
+- If link is torn down unexpectedly, print message and exit
+
    
 ## Roadmap
 1. Plan a better roadmap
@@ -219,22 +260,25 @@ The protocol is build on top of the Reticulum `Request` and
 - [X] ~~Make it scriptable (currently requires a tty)~~
 - [X] ~~Protocol improvements (throughput!)~~
 - [X] ~~Documentation improvements~~
+- [X] ~~Fix issues with running `rnsh` in a binary pipeline, i.e. 
+  piping the output of `tar` over `rsh`.~~
 - [ ] Test on several platforms
 - [ ] Fix issues that come up with testing
-- [ ] Fix issues with running `rnsh` in a binary pipeline, i.e. 
-  piping the output of `tar` over `rsh`.
-- [ ] Beta release
+- [ ] v0.1.0 beta
 - [ ] Test and fix more issues
-- [ ] V1.0
+- [ ] More betas
 - [ ] Enhancement Ideas
-  - [ ] `authorized_keys` mode similar to SSH
+  - [ ] `authorized_keys` mode similar to SSH to allow one listener
+        process to serve multiple users
   - [ ] Git over `rnsh` (git remote helper)
   - [ ] Sliding window acknowledgements for improved throughput
+- [ ] v1.0 someday probably maybe
 
 ## Miscellaneous
 
-By piping into/out of `rnsh`, it should be possible to transfer
+By piping into/out of `rnsh`, it is possible to transfer
 files using the same method discussed in 
 [this article](https://cromwell-intl.com/open-source/tar-and-ssh.html).
-I tested it just now and it doesn't work right. There's probably some
-subtle garbling of the data at one end of the stream or the other.
+It's not terribly fast currently, due to the round-trip rule 
+enforced by the protocol. Sliding window acknowledgements will
+speed this up significantly.
