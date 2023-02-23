@@ -93,11 +93,17 @@ def _sigint_handler(sig, frame):
 signal.signal(signal.SIGINT, _sigint_handler)
 
 
-def _prepare_identity(identity_path):
+def _sanitize_service_name(service_name:str) -> str:
+    return re.sub(r'\W+', '', service_name)
+
+
+def _prepare_identity(identity_path, service_name: str = None):
     global _identity
     log = _get_logger("_prepare_identity")
+    service_name = _sanitize_service_name(service_name or "")
     if identity_path is None:
-        identity_path = RNS.Reticulum.identitypath + "/" + APP_NAME
+        identity_path = RNS.Reticulum.identitypath + "/" + APP_NAME + \
+                        (f".{service_name}" if service_name and len(service_name) > 0 else "")
 
     if os.path.isfile(identity_path):
         _identity = RNS.Identity.from_file(identity_path)
@@ -111,26 +117,32 @@ def _prepare_identity(identity_path):
 def _print_identity(configdir, identitypath, service_name, include_destination: bool):
     global _reticulum
     _reticulum = RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_INFO)
-    _prepare_identity(identitypath)
-    destination = RNS.Destination(_identity, RNS.Destination.IN, RNS.Destination.SINGLE, APP_NAME, service_name)
+    if service_name and len(service_name) > 0:
+        print(f"Using service name \"{service_name}\"")
+    _prepare_identity(identitypath, service_name)
+    destination = RNS.Destination(_identity, RNS.Destination.IN, RNS.Destination.SINGLE, APP_NAME)
     print("Identity     : " + str(_identity))
     if include_destination:
         print("Listening on : " + RNS.prettyhexrep(destination.hash))
     exit(0)
 
 
-async def _listen(configdir, command, identitypath=None, service_name="default", verbosity=0, quietness=0, allowed=None,
+async def _listen(configdir, command, identitypath=None, service_name=None, verbosity=0, quietness=0, allowed=None,
                   disable_auth=None, announce_period=900, no_remote_command=True, remote_cmd_as_args=False):
     global _identity, _allow_all, _allowed_identity_hashes, _reticulum, _cmd, _destination, _no_remote_command
     global _remote_cmd_as_args
     log = _get_logger("_listen")
+    if service_name is None or len(service_name) == 0:
+        service_name = "default"
+
+    log.info(f"Using service name {service_name}")
 
 
     targetloglevel = RNS.LOG_INFO + verbosity - quietness
     _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
     rnslogging.RnsHandler.set_log_level_with_rns_level(targetloglevel)
-    _prepare_identity(identitypath)
-    _destination = RNS.Destination(_identity, RNS.Destination.IN, RNS.Destination.SINGLE, APP_NAME, service_name)
+    _prepare_identity(identitypath, service_name)
+    _destination = RNS.Destination(_identity, RNS.Destination.IN, RNS.Destination.SINGLE, APP_NAME)
 
     _cmd = command
     if _cmd is None or len(_cmd) == 0:
@@ -218,17 +230,45 @@ async def _listen(configdir, command, identitypath=None, service_name="default",
                 await asyncio.sleep(0.01)
 
 
-async def _spin(until: callable = None, timeout: float | None = None) -> bool:
+async def _spin_tty(until=None, msg=None, timeout=None):
+    i = 0
+    syms = "⢄⢂⢁⡁⡈⡐⡠"
+    if timeout != None:
+        timeout = time.time()+timeout
+
+    print(msg+"  ", end=" ")
+    while (timeout == None or time.time()<timeout) and not until():
+        await asyncio.sleep(0.1)
+        print(("\b\b"+syms[i]+" "), end="")
+        sys.stdout.flush()
+        i = (i+1)%len(syms)
+
+    print("\r"+" "*len(msg)+"  \r", end="")
+
+    if timeout != None and time.time() > timeout:
+        return False
+    else:
+        return True
+
+
+async def _spin_pipe(until: callable = None, msg=None, timeout: float | None = None) -> bool:
     if timeout is not None:
         timeout += time.time()
 
     while (timeout is None or time.time() < timeout) and not until():
-        if await _check_finished(0.01):
+        if await _check_finished(0.1):
             raise asyncio.CancelledError()
     if timeout is not None and time.time() > timeout:
         return False
     else:
         return True
+
+
+async def _spin(until: callable = None, msg=None, timeout: float | None = None) -> bool:
+    if os.isatty(1):
+        return await _spin_tty(until, msg, timeout)
+    else:
+        return await _spin_pipe(until, msg, timeout)
 
 
 _link: RNS.Link | None = None
@@ -266,7 +306,7 @@ class RemoteExecutionError(Exception):
 
 
 async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0, noid=False, destination=None,
-                         service_name="default", timeout=RNS.Transport.PATH_REQUEST_TIMEOUT):
+                         timeout=RNS.Transport.PATH_REQUEST_TIMEOUT):
     global _identity, _reticulum, _link, _destination, _remote_exec_grace, _tr, _new_data
     log = _get_logger("_initiate_link")
 
@@ -291,7 +331,8 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
     if not RNS.Transport.has_path(destination_hash):
         RNS.Transport.request_path(destination_hash)
         log.info(f"Requesting path...")
-        if not await _spin(until=lambda: RNS.Transport.has_path(destination_hash), timeout=timeout):
+        if not await _spin(until=lambda: RNS.Transport.has_path(destination_hash), msg="Requesting path...",
+                           timeout=timeout):
             raise RemoteExecutionError("Path not found")
 
     if _destination is None:
@@ -300,8 +341,7 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
             listener_identity,
             RNS.Destination.OUT,
             RNS.Destination.SINGLE,
-            APP_NAME,
-            service_name
+            APP_NAME
         )
 
     if _link is None or _link.status == RNS.Link.PENDING:
@@ -312,7 +352,8 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
         _link.set_link_closed_callback(_client_link_closed)
 
     log.info(f"Establishing link...")
-    if not await _spin(until=lambda: _link.status == RNS.Link.ACTIVE, timeout=timeout):
+    if not await _spin(until=lambda: _link.status == RNS.Link.ACTIVE, msg="Establishing link...",
+                       timeout=timeout):
         raise RemoteExecutionError("Could not establish link with " + RNS.prettyhexrep(destination_hash))
 
     log.debug("Have link")
@@ -323,8 +364,16 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
     _link.set_packet_callback(_client_packet_handler)
 
 
+async def _handle_error(errmsg: protocol.Message):
+    if isinstance(errmsg, protocol.ErrorMessage):
+        with contextlib.suppress(Exception):
+            if _link and _link.status == RNS.Link.ACTIVE:
+                _link.teardown()
+        await asyncio.sleep(0.1)
+        raise RemoteExecutionError(f"Remote error: {errmsg.msg}")
+
 async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness: int, noid: bool, destination: str,
-                    service_name: str, timeout: float, command: [str] | None = None):
+                    timeout: float, command: [str] | None = None):
     global _new_data, _finished, _tr, _cmd, _pre_input
     log = _get_logger("_initiate")
     loop = asyncio.get_running_loop()
@@ -339,7 +388,6 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
         quietness=quietness,
         noid=noid,
         destination=destination,
-        service_name=service_name,
         timeout=timeout,
     )
 
@@ -360,6 +408,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
         try:
             vp = _pq.get(timeout=max(outlet.rtt * 20, 5))
             vm = messenger.receive(vp)
+            await _handle_error(vm)
             if not isinstance(vm, protocol.VersionInfoMessage):
                 raise Exception("Invalid message received")
             log.debug(f"Server version info: sw {vm.sw_version} prot {vm.protocol_version}")
@@ -433,6 +482,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
                 try:
                     packet = _pq.get(timeout=sleeper.next_sleep_time() if not processed else 0.0005)
                     message = messenger.receive(packet)
+                    await _handle_error(message)
                     processed = True
                     if isinstance(message, protocol.StreamDataMessage):
                         if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDOUT:
@@ -534,22 +584,25 @@ async def _rnsh_cli_main():
                       remote_cmd_as_args=args.remote_cmd_as_args)
         return 0
 
-    if args.destination is not None and args.service_name is not None:
-        return_code = await _initiate(
-            configdir=args.config,
-            identitypath=args.identity,
-            verbosity=args.verbose,
-            quietness=args.quiet,
-            noid=args.no_id,
-            destination=args.destination,
-            service_name=args.service_name,
-            timeout=args.timeout,
-            command=args.command_line
-        )
-        return return_code if args.mirror else 0
+    if args.destination is not None:
+        try:
+            return_code = await _initiate(
+                configdir=args.config,
+                identitypath=args.identity,
+                verbosity=args.verbose,
+                quietness=args.quiet,
+                noid=args.no_id,
+                destination=args.destination,
+                timeout=args.timeout,
+                command=args.command_line
+            )
+            return return_code if args.mirror else 0
+        except Exception as ex:
+            print(f"{ex}")
+            return 255;
     else:
         print("")
-        print(args.usage)
+        print(rnsh.args.usage)
         print("")
         return 1
 

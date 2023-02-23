@@ -26,6 +26,14 @@ There will sometimes be breaking changes in the protocol between
 releases. Use at your own peril!
 
 ## Recent Changes
+### v0.0.12
+- Remove service name from RNS destination aspects. Service name
+  now selects a suffix for the identity file and should only be
+  supplied on the listener. The initiator only needs the destination
+  hash of the listener to connect.
+- Show a spinner during link establishment on tty sessions
+- Attempt to catch and beautify exceptions on initiator
+
 ### v0.0.11
 - Event loop bursting improves throughput and CPU utilization on
   both listener and initiator.
@@ -39,41 +47,6 @@ releases. Use at your own peril!
 ### v0.0.9
 - Switch to a new packet-based protocol
 - Bug fixes and dependency updates
-
-### v0.0.8
-- Improved test suite exposed several issues with the handling of
-command line arguments which are now fixed
-- Fixed a race condition that would cause remote characters to be 
-  lost intermittently when running remote commands that finish
-  immediately.
-- Added automated testing that actually spins up a random listener
-  and initiator in a private Reticulum network and passes data
-  between them, uncovering more issues which are now fixed.
-- Fixed (hopefully) an issue where `rnsh` doesn't know what
-  version it is.
-
-### v0.0.7
-Added `-A` command line option. This listener option causes the
-remote command line to be appended to the arguments list of the
-launched program. This allows the listener to jail connections
-to a particular executable while still allowing parameters.
-
-### v0.0.6
-Minor improvements in transport efficiency
-
-### v0.0.5
-#### Remote command line and pipe compatibility
-Command line options have changed somewhat to allow the initiator
-to supply a command line. This allows `rnsh` to function similarly
-to SSH. You can pipe into or out of `rnsh` to send input through
-remote commands or remote command output through other commands.
-
-This behavior can be blocked on the listener with the `-C` option.
-
-When the initiator does not supply a command, the listener uses
-a default command specified on its command line. If a default
-command is not specified, the listener falls back to the shell
-of the user it is running under.
 
 ## Quickstart
 
@@ -98,9 +71,8 @@ rnsh -l -p
 # On initiator
 rnsh -p
 ```
-Note: if you are using a non-default identity or service name, be
-sure to supply these options with `-p` as the identity and 
-destination hashes will change depending on these settings.
+Note: service name no longer is supplied on initiator. The destination
+      hash encapsulates this information.
 
 #### Listener
 - Listening for default service name ("default").
@@ -123,20 +95,20 @@ rnsh a5f72aefc2cb3cdba648f73f77c4e887
 ## Options
 ```
 Usage:
-    rnsh [--config <configdir>] [-i <identityfile>] [-s <service_name>] [-l] -p
-    rnsh -l [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
-         [-v... | -q...] [-b <period>] (-n | -a <identity_hash> [-a <identity_hash>] ...) 
-         [-A | -C] [[--] <program> [<arg> ...]]
-    rnsh [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
-         [-v... | -q...] [-N] [-m] [-w <timeout>] <destination_hash> 
-         [[--] <program> [<arg> ...]]
+    rnsh -l [-c <configdir>] [-i <identityfile> | -s <service_name>] [-v... | -q...] -p
+    rnsh -l [-c <configdir>] [-i <identityfile> | -s <service_name>] [-v... | -q...] 
+            [-b <period>] (-n | -a <identity_hash> [-a <identity_hash>] ...) [-A | -C] 
+            [[--] <program> [<arg> ...]]
+    rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] -p
+    rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] [-N] [-m] [-w <timeout>] 
+         <destination_hash> [[--] <program> [<arg> ...]]
     rnsh -h
     rnsh --version
 
 Options:
-    --config DIR                 Alternate Reticulum config directory to use
+    -c DIR --config DIR          Alternate Reticulum config directory to use
     -i FILE --identity FILE      Specific identity file to use
-    -s NAME --service NAME       Listen on/connect to specific service name if not default
+    -s NAME --service NAME       Service name for identity file if not default
     -p --print-identity          Print identity information and exit
     -l --listen                  Listen (server) mode. If supplied, <program> <arg>...will 
                                    be used as the command line when the initiator does not
@@ -171,14 +143,30 @@ with an RNS identity, and a service name. Together, RNS makes
 these into a destination hash that can be used to connect to
 your listener.
    
-Multiple listeners can use the same identity. As long as 
-they are given different service names. They will have 
-different destination hashes and not conflict.
+Each listener must use a unique identity. The `-s` parameter
+can be used to specify a service name, which creates a unique
+identity file.
 
-Listeners must be configured with a command line to run (at 
-least at this time). The identity hash string is set in the
-environment variable RNS_REMOTE_IDENTITY for use in child
-programs.
+Listeners can be configured with a command line to run on
+connect. Initiators can supply a command line as well. There 
+are several different options for the way the command line 
+is handled:
+
+- `-C` no initiator command line is allowed; the connection will
+  be terminated if one is supplied.
+- `-A` initiator-supplied command line is appended to listener-
+  configured command line
+- With neither of these options, the listener will use the first 
+  valid command line from this list:
+  1. Initiator-supplied command line
+  2. Listener command line argument
+  3. Default shell of user listener is running under
+
+
+If the `-n` option is not set on the listener, the initiator
+is required to identify before starting a command. The program 
+will be started with the initiator's identity hash string is set 
+in the environment variable `RNS_REMOTE_IDENTITY`.
 
 Listeners are set up using the `-l` flag.
    

@@ -41,13 +41,27 @@ def test_program_initiate_no_args():
 def test_program_initiate_dash_args():
     docopt_threw = False
     try:
-        args = rnsh.args.Args(shlex.split("rnsh --config ~/Projects/rnsh/testconfig -s test -vvvvvvv a5f72aefc2cb3cdba648f73f77c4e887 -- -l"))
+        args = rnsh.args.Args(shlex.split("rnsh --config ~/Projects/rnsh/testconfig -vvvvvvv a5f72aefc2cb3cdba648f73f77c4e887 -- -l"))
         assert not args.listen
         assert args.config == "~/Projects/rnsh/testconfig"
-        assert args.service_name == "test"
         assert args.verbose == 7
         assert args.destination == "a5f72aefc2cb3cdba648f73f77c4e887"
         assert args.command_line == ["-l"]
+    except docopt.DocoptExit:
+        docopt_threw = True
+    assert not docopt_threw
+
+
+def test_program_listen_dash_args():
+    docopt_threw = False
+    try:
+        args = rnsh.args.Args(shlex.split("rnsh -l --config ~/Projects/rnsh/testconfig -n -C -- /bin/pwd"))
+        assert args.listen
+        assert args.config == "~/Projects/rnsh/testconfig"
+        assert args.destination is None
+        assert args.no_auth
+        assert args.no_remote_cmd
+        assert args.command_line == ["/bin/pwd"]
     except docopt.DocoptExit:
         docopt_threw = True
     assert not docopt_threw

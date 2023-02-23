@@ -354,7 +354,7 @@ class ListenerSession:
             message = self.messenger.receive(raw)
             self._handle_message(message)
         except Exception as ex:
-            self._protocol_error("unusable packet")
+            self._protocol_error(f"error receiving packet: {ex}")
 
 
 class RNSOutlet(LSOutletBase):

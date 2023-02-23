@@ -18,20 +18,20 @@ def _split_array_at(arr: [_T], at: _T) -> ([_T], [_T]):
 usage = \
 '''
 Usage:
-    rnsh [--config <configdir>] [-i <identityfile>] [-s <service_name>] [-l] -p
-    rnsh -l [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
-         [-v... | -q...] [-b <period>] (-n | -a <identity_hash> [-a <identity_hash>] ...) 
-         [-A | -C] [[--] <program> [<arg> ...]]
-    rnsh [--config <configfile>] [-i <identityfile>] [-s <service_name>] 
-         [-v... | -q...] [-N] [-m] [-w <timeout>] <destination_hash> 
-         [[--] <program> [<arg> ...]]
+    rnsh -l [-c <configdir>] [-i <identityfile> | -s <service_name>] [-v... | -q...] -p
+    rnsh -l [-c <configdir>] [-i <identityfile> | -s <service_name>] [-v... | -q...] 
+            [-b <period>] (-n | -a <identity_hash> [-a <identity_hash>] ...) [-A | -C] 
+            [[--] <program> [<arg> ...]]
+    rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] -p
+    rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] [-N] [-m] [-w <timeout>] 
+         <destination_hash> [[--] <program> [<arg> ...]]
     rnsh -h
     rnsh --version
 
 Options:
-    --config DIR                 Alternate Reticulum config directory to use
+    -c DIR --config DIR          Alternate Reticulum config directory to use
     -i FILE --identity FILE      Specific identity file to use
-    -s NAME --service NAME       Listen on/connect to specific service name if not default
+    -s NAME --service NAME       Service name for identity file if not default
     -p --print-identity          Print identity information and exit
     -l --listen                  Listen (server) mode. If supplied, <program> <arg>...will 
                                    be used as the command line when the initiator does not
@@ -59,6 +59,7 @@ Options:
     -h --help                    Show this help
 '''
 
+DEFAULT_SERVICE_NAME = "default"
 
 class Args:
     def __init__(self, argv: [str]):
@@ -75,9 +76,11 @@ class Args:
     
             args = docopt.docopt(usage, argv=self.docopts_argv[1:], version=f"rnsh {rnsh.__version__}")
             # json.dump(args, sys.stdout)
-    
-            self.service_name = args.get("--service", None) or "default"
+
             self.listen = args.get("--listen", None) or False
+            self.service_name = args.get("--service", None)
+            if self.listen and (self.service_name is None or len(self.service_name) > 0):
+                self.service_name = DEFAULT_SERVICE_NAME
             self.identity = args.get("--identity", None)
             self.config = args.get("--config", None)
             self.print_identity = args.get("--print-identity", None) or False
