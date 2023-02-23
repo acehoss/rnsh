@@ -391,7 +391,7 @@ async def _initiate(configdir: str, identitypath: str, verbosity: int, quietness
         timeout=timeout,
     )
 
-    if not _link or _link.status != RNS.Link.ACTIVE:
+    if not _link or _link.status not in [RNS.Link.ACTIVE, RNS.Link.PENDING]:
         _finished.set()
         return 255
 

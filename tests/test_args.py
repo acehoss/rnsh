@@ -33,10 +33,25 @@ def test_program_initiate_no_args():
         args = rnsh.args.Args(shlex.split("rnsh one"))
         assert not args.listen
         assert args.destination == "one"
+        assert not args.no_id
         assert args.command_line == []
     except docopt.DocoptExit:
         docopt_threw = True
     assert not docopt_threw
+
+
+def test_program_initiate_no_auth():
+    docopt_threw = False
+    try:
+        args = rnsh.args.Args(shlex.split("rnsh -N one"))
+        assert not args.listen
+        assert args.destination == "one"
+        assert args.no_id
+        assert args.command_line == []
+    except docopt.DocoptExit:
+        docopt_threw = True
+    assert not docopt_threw
+
 
 def test_program_initiate_dash_args():
     docopt_threw = False

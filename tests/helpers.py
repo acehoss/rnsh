@@ -84,6 +84,7 @@ class SubprocessReader(contextlib.AbstractContextManager):
         self._log.debug(f"cleanup()")
         if self.process and self.process.running:
             self.process.terminate(kill_delay=0.1)
+        time.sleep(0.5)
 
     def __exit__(self, __exc_type: typing.Type[BaseException], __exc_value: BaseException,
                  __traceback: types.TracebackType) -> bool:
