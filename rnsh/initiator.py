@@ -320,8 +320,8 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
 
             loop.add_signal_handler(signal.SIGWINCH, sigwinch_handler)
             _finished = asyncio.Event()
-            loop.add_signal_handler(signal.SIGINT, _sigint_handler)
-            loop.add_signal_handler(signal.SIGTERM, _sigint_handler)
+            loop.add_signal_handler(signal.SIGINT, functools.partial(_sigint_handler, signal.SIGINT, loop))
+            loop.add_signal_handler(signal.SIGTERM, functools.partial(_sigint_handler, signal.SIGTERM, loop))
             mdu = _link.MDU - 16
             sent_eof = False
             last_winch = time.time()
