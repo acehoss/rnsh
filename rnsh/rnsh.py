@@ -102,53 +102,58 @@ def print_identity(configdir, identitypath, service_name, include_destination: b
     exit(0)
 
 
+verbose_set = False
+
+
 async def _rnsh_cli_main():
-        #with contextlib.suppress(KeyboardInterrupt, SystemExit):
-        import docopt
-        log = _get_logger("main")
-        _loop = asyncio.get_running_loop()
-        rnslogging.set_main_loop(_loop)
-        args = rnsh.args.Args(sys.argv)
+    global verbose_set
+    log = _get_logger("main")
+    _loop = asyncio.get_running_loop()
+    rnslogging.set_main_loop(_loop)
+    args = rnsh.args.Args(sys.argv)
+    verbose_set = args.verbose > 0
 
-        if args.print_identity:
-            print_identity(args.config, args.identity, args.service_name, args.listen)
-            return 0
+    if args.print_identity:
+        print_identity(args.config, args.identity, args.service_name, args.listen)
+        return 0
 
-        if args.listen:
-            # log.info("command " + args.command)
-            await listener.listen(configdir=args.config,
-                                  command=args.command_line,
-                                  identitypath=args.identity,
-                                  service_name=args.service_name,
-                                  verbosity=args.verbose,
-                                  quietness=args.quiet,
-                                  allowed=args.allowed,
-                                  disable_auth=args.no_auth,
-                                  announce_period=args.announce,
-                                  no_remote_command=args.no_remote_cmd,
-                                  remote_cmd_as_args=args.remote_cmd_as_args)
-            return 0
+    if args.listen:
+        # log.info("command " + args.command)
+        await listener.listen(configdir=args.config,
+                              command=args.command_line,
+                              identitypath=args.identity,
+                              service_name=args.service_name,
+                              verbosity=args.verbose,
+                              quietness=args.quiet,
+                              allowed=args.allowed,
+                              disable_auth=args.no_auth,
+                              announce_period=args.announce,
+                              no_remote_command=args.no_remote_cmd,
+                              remote_cmd_as_args=args.remote_cmd_as_args)
+        return 0
 
-        if args.destination is not None:
-            return_code = await initiator.initiate(configdir=args.config,
-                                                   identitypath=args.identity,
-                                                   verbosity=args.verbose,
-                                                   quietness=args.quiet,
-                                                   noid=args.no_id,
-                                                   destination=args.destination,
-                                                   timeout=args.timeout,
-                                                   command=args.command_line
-            )
-            return return_code if args.mirror else 0
-        else:
-            print("")
-            print(rnsh.args.usage)
-            print("")
-            return 1
+    if args.destination is not None:
+        return_code = await initiator.initiate(configdir=args.config,
+                                               identitypath=args.identity,
+                                               verbosity=args.verbose,
+                                               quietness=args.quiet,
+                                               noid=args.no_id,
+                                               destination=args.destination,
+                                               timeout=args.timeout,
+                                               command=args.command_line
+        )
+        return return_code if args.mirror else 0
+    else:
+        print("")
+        print(rnsh.args.usage)
+        print("")
+        return 1
 
 
 def rnsh_cli():
+    global verbose_set
     return_code = 1
+    exc = None
     try:
         return_code = asyncio.run(_rnsh_cli_main())
     except SystemExit:
@@ -156,8 +161,11 @@ def rnsh_cli():
     except KeyboardInterrupt:
         pass
     except Exception as ex:
-       print(f"Unhandled exception: {ex}")
+        print(f"Unhandled exception: {ex}")
+        exc = ex
     process.tty_unset_reader_callbacks(0)
+    if verbose_set and exc:
+        raise exc
     sys.exit(return_code if return_code is not None else 255)
 
 

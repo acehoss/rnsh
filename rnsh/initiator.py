@@ -143,12 +143,12 @@ class InitiatorState(enum.IntEnum):
 
 def _client_link_closed(link):
     log = _get_logger("_client_link_closed")
-    _finished.set()
+    if _finished:
+        _finished.set()
 
 
-def _client_packet_handler(message, packet):
-    log = _get_logger("_client_packet_handler")
-    packet.prove()
+def _client_message_handler(message: RNS.MessageBase):
+    log = _get_logger("_client_message_handler")
     _pq.put(message)
 
 
@@ -213,10 +213,8 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
         _link.identify(_identity)
         _link.did_identify = True
 
-    _link.set_packet_callback(_client_packet_handler)
 
-
-async def _handle_error(errmsg: protocol.Message):
+async def _handle_error(errmsg: RNS.MessageBase):
     if isinstance(errmsg, protocol.ErrorMessage):
         with contextlib.suppress(Exception):
             if _link and _link.status == RNS.Link.ACTIVE:
@@ -249,150 +247,148 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
 
         state = InitiatorState.IS_LINKED
         outlet = session.RNSOutlet(_link)
-        with protocol.Messenger(retry_delay_min=5) as messenger:
+        channel = _link.get_channel()
+        protocol.register_message_types(channel)
+        channel.add_message_handler(_client_message_handler)
 
-            # Next step after linking and identifying: send version
-            # if not await _spin(lambda: messenger.is_outlet_ready(outlet), timeout=5):
-            #     print("Error bringing up link")
-            #     return 253
+        # Next step after linking and identifying: send version
+        # if not await _spin(lambda: messenger.is_outlet_ready(outlet), timeout=5):
+        #     print("Error bringing up link")
+        #     return 253
 
-            messenger.send(outlet, protocol.VersionInfoMessage())
+        channel.send(protocol.VersionInfoMessage())
+        try:
+            vm = _pq.get(timeout=max(outlet.rtt * 20, 5))
+            await _handle_error(vm)
+            if not isinstance(vm, protocol.VersionInfoMessage):
+                raise Exception("Invalid message received")
+            log.debug(f"Server version info: sw {vm.sw_version} prot {vm.protocol_version}")
+            state = InitiatorState.IS_RUNNING
+        except queue.Empty:
+            print("Protocol error")
+            return 254
+
+        winch = False
+        def sigwinch_handler():
+            nonlocal winch
+            # log.debug("WindowChanged")
+            winch = True
+
+        stdin_eof = False
+        def stdin():
+            nonlocal stdin_eof
             try:
-                vp = _pq.get(timeout=max(outlet.rtt * 20, 5))
-                vm = messenger.receive(vp)
-                await _handle_error(vm)
-                if not isinstance(vm, protocol.VersionInfoMessage):
-                    raise Exception("Invalid message received")
-                log.debug(f"Server version info: sw {vm.sw_version} prot {vm.protocol_version}")
-                state = InitiatorState.IS_RUNNING
-            except queue.Empty:
-                print("Protocol error")
-                return 254
+                data = process.tty_read(sys.stdin.fileno())
+                log.debug(f"stdin {data}")
+                if data is not None:
+                    data_buffer.extend(data)
+            except EOFError:
+                if os.isatty(0):
+                    data_buffer.extend(process.CTRL_D)
+                stdin_eof = True
+                process.tty_unset_reader_callbacks(sys.stdin.fileno())
 
-            winch = False
-            def sigwinch_handler():
-                nonlocal winch
-                # log.debug("WindowChanged")
-                winch = True
+        process.tty_add_reader_callback(sys.stdin.fileno(), stdin)
 
-            stdin_eof = False
-            def stdin():
-                nonlocal stdin_eof
-                try:
-                    data = process.tty_read(sys.stdin.fileno())
-                    log.debug(f"stdin {data}")
-                    if data is not None:
-                        data_buffer.extend(data)
-                except EOFError:
-                    if os.isatty(0):
-                        data_buffer.extend(process.CTRL_D)
-                    stdin_eof = True
-                    process.tty_unset_reader_callbacks(sys.stdin.fileno())
-
-            process.tty_add_reader_callback(sys.stdin.fileno(), stdin)
-
-            tcattr = None
-            rows, cols, hpix, vpix = (None, None, None, None)
+        tcattr = None
+        rows, cols, hpix, vpix = (None, None, None, None)
+        try:
+            tcattr = termios.tcgetattr(0)
+            rows, cols, hpix, vpix = process.tty_get_winsize(0)
+        except:
             try:
-                tcattr = termios.tcgetattr(0)
-                rows, cols, hpix, vpix = process.tty_get_winsize(0)
+                tcattr = termios.tcgetattr(1)
+                rows, cols, hpix, vpix = process.tty_get_winsize(1)
             except:
                 try:
-                    tcattr = termios.tcgetattr(1)
-                    rows, cols, hpix, vpix = process.tty_get_winsize(1)
+                    tcattr = termios.tcgetattr(2)
+                    rows, cols, hpix, vpix = process.tty_get_winsize(2)
                 except:
-                    try:
-                        tcattr = termios.tcgetattr(2)
-                        rows, cols, hpix, vpix = process.tty_get_winsize(2)
-                    except:
-                        pass
+                    pass
 
-            messenger.send(outlet, protocol.ExecuteCommandMesssage(cmdline=command,
-                                                                   pipe_stdin=not os.isatty(0),
-                                                                   pipe_stdout=not os.isatty(1),
-                                                                   pipe_stderr=not os.isatty(2),
-                                                                   tcflags=tcattr,
-                                                                   term=os.environ.get("TERM", None),
-                                                                   rows=rows,
-                                                                   cols=cols,
-                                                                   hpix=hpix,
-                                                                   vpix=vpix))
+        await _spin(lambda: channel.is_ready_to_send(), "Waiting for channel...", 1)
+        channel.send(protocol.ExecuteCommandMesssage(cmdline=command,
+                                                     pipe_stdin=not os.isatty(0),
+                                                     pipe_stdout=not os.isatty(1),
+                                                     pipe_stderr=not os.isatty(2),
+                                                     tcflags=tcattr,
+                                                     term=os.environ.get("TERM", None),
+                                                     rows=rows,
+                                                     cols=cols,
+                                                     hpix=hpix,
+                                                     vpix=vpix))
 
-            loop.add_signal_handler(signal.SIGWINCH, sigwinch_handler)
-            _finished = asyncio.Event()
-            loop.add_signal_handler(signal.SIGINT, functools.partial(_sigint_handler, signal.SIGINT, loop))
-            loop.add_signal_handler(signal.SIGTERM, functools.partial(_sigint_handler, signal.SIGTERM, loop))
-            mdu = _link.MDU - 16
-            sent_eof = False
-            last_winch = time.time()
-            sleeper = helpers.SleepRate(0.01)
-            processed = False
-            while not await _check_finished() and state in [InitiatorState.IS_RUNNING]:
+        loop.add_signal_handler(signal.SIGWINCH, sigwinch_handler)
+        _finished = asyncio.Event()
+        loop.add_signal_handler(signal.SIGINT, functools.partial(_sigint_handler, signal.SIGINT, loop))
+        loop.add_signal_handler(signal.SIGTERM, functools.partial(_sigint_handler, signal.SIGTERM, loop))
+        mdu = _link.MDU - 16
+        sent_eof = False
+        last_winch = time.time()
+        sleeper = helpers.SleepRate(0.01)
+        processed = False
+        while not await _check_finished() and state in [InitiatorState.IS_RUNNING]:
+            try:
                 try:
-                    try:
-                        packet = _pq.get(timeout=sleeper.next_sleep_time() if not processed else 0.0005)
-                        message = messenger.receive(packet)
-                        await _handle_error(message)
+                    message = _pq.get(timeout=sleeper.next_sleep_time() if not processed else 0.0005)
+                    await _handle_error(message)
+                    processed = True
+                    if isinstance(message, protocol.StreamDataMessage):
+                        if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDOUT:
+                            if message.data and len(message.data) > 0:
+                                ttyRestorer.raw()
+                                log.debug(f"stdout: {message.data}")
+                                os.write(1, message.data)
+                                sys.stdout.flush()
+                            if message.eof:
+                                os.close(1)
+                        if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDERR:
+                            if message.data and len(message.data) > 0:
+                                ttyRestorer.raw()
+                                log.debug(f"stdout: {message.data}")
+                                os.write(2, message.data)
+                                sys.stderr.flush()
+                            if message.eof:
+                                os.close(2)
+                    elif isinstance(message, protocol.CommandExitedMessage):
+                        log.debug(f"received return code {message.return_code}, exiting")
+                        return message.return_code
+                    elif isinstance(message, protocol.ErrorMessage):
+                        log.error(message.data)
+                        if message.fatal:
+                            _link.teardown()
+                            return 200
+
+                except queue.Empty:
+                    processed = False
+
+                if channel.is_ready_to_send():
+                    stdin = data_buffer[:mdu]
+                    data_buffer = data_buffer[mdu:]
+                    eof = not sent_eof and stdin_eof and len(stdin) == 0
+                    if len(stdin) > 0 or eof:
+                        channel.send(protocol.StreamDataMessage(protocol.StreamDataMessage.STREAM_ID_STDIN, stdin, eof))
+                        sent_eof = eof
                         processed = True
-                        if isinstance(message, protocol.StreamDataMessage):
-                            if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDOUT:
-                                if message.data and len(message.data) > 0:
-                                    ttyRestorer.raw()
-                                    log.debug(f"stdout: {message.data}")
-                                    os.write(1, message.data)
-                                    sys.stdout.flush()
-                                if message.eof:
-                                    os.close(1)
-                            if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDERR:
-                                if message.data and len(message.data) > 0:
-                                    ttyRestorer.raw()
-                                    log.debug(f"stdout: {message.data}")
-                                    os.write(2, message.data)
-                                    sys.stderr.flush()
-                                if message.eof:
-                                    os.close(2)
-                        elif isinstance(message, protocol.CommandExitedMessage):
-                            log.debug(f"received return code {message.return_code}, exiting")
-                            with exception.permit(SystemExit, KeyboardInterrupt):
-                                _link.teardown()
-                                return message.return_code
-                        elif isinstance(message, protocol.ErrorMessage):
-                            log.error(message.data)
-                            if message.fatal:
-                                _link.teardown()
-                                return 200
 
-                    except queue.Empty:
-                        processed = False
+                # send window change, but rate limited
+                if winch and time.time() - last_winch > _link.rtt * 25:
+                    last_winch = time.time()
+                    winch = False
+                    with contextlib.suppress(Exception):
+                        r, c, h, v = process.tty_get_winsize(0)
+                        channel.send(protocol.WindowSizeMessage(r, c, h, v))
+                        processed = True
+            except RemoteExecutionError as e:
+                print(e.msg)
+                return 255
+            except Exception as ex:
+                print(f"Client exception: {ex}")
+                if _link and _link.status != RNS.Link.CLOSED:
+                    _link.teardown()
+                    return 127
 
-                    if messenger.is_outlet_ready(outlet):
-                        stdin = data_buffer[:mdu]
-                        data_buffer = data_buffer[mdu:]
-                        eof = not sent_eof and stdin_eof and len(stdin) == 0
-                        if len(stdin) > 0 or eof:
-                            messenger.send(outlet, protocol.StreamDataMessage(protocol.StreamDataMessage.STREAM_ID_STDIN,
-                                                                              stdin, eof))
-                            sent_eof = eof
-                            processed = True
-
-                    # send window change, but rate limited
-                    if winch and time.time() - last_winch > _link.rtt * 25:
-                        last_winch = time.time()
-                        winch = False
-                        with contextlib.suppress(Exception):
-                            r, c, h, v = process.tty_get_winsize(0)
-                            messenger.send(outlet, protocol.WindowSizeMessage(r, c, h, v))
-                            processed = True
-                except RemoteExecutionError as e:
-                    print(e.msg)
-                    return 255
-                except Exception as ex:
-                    print(f"Client exception: {ex}")
-                    if _link and _link.status != RNS.Link.CLOSED:
-                        _link.teardown()
-                        return 127
-
-                # await process.event_wait_any([_new_data, _finished], timeout=min(max(rtt * 50, 5), 120))
-                # await sleeper.sleep_async()
-            log.debug("after main loop")
-            return 0
+            # await process.event_wait_any([_new_data, _finished], timeout=min(max(rtt * 50, 5), 120))
+            # await sleeper.sleep_async()
+        log.debug("after main loop")
+        return 0

@@ -159,7 +159,7 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
         log.warning("Warning: No allowed identities configured, rnsh will not accept any connections!")
 
     def link_established(lnk: RNS.Link):
-        session.ListenerSession(session.RNSOutlet.get_outlet(lnk), loop)
+        session.ListenerSession(session.RNSOutlet.get_outlet(lnk), lnk.get_channel(), loop)
     _destination.set_link_established_callback(link_established)
 
     _finished = asyncio.Event()
@@ -188,7 +188,6 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
         log.warning("Shutting down")
         await session.ListenerSession.terminate_all("Shutting down")
         await asyncio.sleep(1)
-        session.ListenerSession.messenger.shutdown()
         links_still_active = list(filter(lambda l: l.status != RNS.Link.CLOSED, _destination.links))
         for link in links_still_active:
             if link.status not in [RNS.Link.CLOSED]:
