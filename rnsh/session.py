@@ -210,7 +210,7 @@ class ListenerSession:
             elif not self.channel.is_ready_to_send():
                 return False
             elif len(self.stderr_buf) > 0:
-                mdu = self.channel.MDU - protocol.StreamDataMessage.OVERHEAD
+                mdu = protocol.StreamDataMessage.MAX_DATA_LEN
                 data = self.stderr_buf[:mdu]
                 self.stderr_buf = self.stderr_buf[mdu:]
                 send_eof = self.process.stderr_eof and len(data) == 0 and not self.stderr_eof_sent
@@ -222,7 +222,7 @@ class ListenerSession:
                     self.stderr_eof_sent = True
                 return True
             elif len(self.stdout_buf) > 0:
-                mdu = self.channel.MDU - protocol.StreamDataMessage.OVERHEAD
+                mdu = protocol.StreamDataMessage.MAX_DATA_LEN
                 data = self.stdout_buf[:mdu]
                 self.stdout_buf = self.stdout_buf[mdu:]
                 send_eof = self.process.stdout_eof and len(data) == 0 and not self.stdout_eof_sent
