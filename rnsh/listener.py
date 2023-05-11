@@ -28,7 +28,6 @@ import asyncio
 import base64
 import enum
 import functools
-import importlib.metadata
 import logging as __logging
 import os
 import queue
