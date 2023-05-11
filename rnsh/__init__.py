@@ -31,7 +31,11 @@ def _get_version():
             import tomli
             return tomli.load(open(os.path.join(os.path.dirname(module_dir), "pyproject.toml"), "rb"))["tool"]["poetry"]["version"]
         except:
-            return "0.0.0"
+            try:
+                import pkg_resources
+                return pkg_resources.get_distribution("rnsh").version
+            except:
+                return "0.0.0"
 
     except:
         return "0.0.0"
