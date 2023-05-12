@@ -13,7 +13,6 @@ import os
 
 
 def test_version():
-    # version = importlib.metadata.version(rnsh.__version__)
     assert rnsh.__version__ != "0.0.0"
     assert rnsh.__version__ != "0.0.1"
 
