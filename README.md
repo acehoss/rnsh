@@ -19,13 +19,21 @@ aims to provide a similar experience to SSH.
 - [Roadmap](#roadmap)
 - [Active TODO](#todo)
 
-### Reminder: Alpha Software
-These early versions will be buggy. There will sometimes be major
-breaking changes to the command line parameters between releases.
-There will sometimes be breaking changes in the protocol between
-releases. Use at your own peril!
+### Reminder: Beta Software
+The interface is starting to firm up, but some bug fixes at this
+point still may introduce breaking changes, especially in the
+protocol layers of the software.
 
 ## Recent Changes
+### v0.1.1
+- Fix issue with intermittent data corruption
+
+### v0.1.0
+- First beta! Includes peformance improvements.
+
+### v0.0.13, v0.0.14
+- Bug fixes
+
 ### v0.0.12
 - Remove service name from RNS destination aspects. Service name
   now selects a suffix for the identity file and should only be
@@ -262,10 +270,10 @@ Process messages received from listener.
 - [X] ~~Documentation improvements~~
 - [X] ~~Fix issues with running `rnsh` in a binary pipeline, i.e. 
   piping the output of `tar` over `rsh`.~~
-- [ ] Test on several platforms
-- [ ] Fix issues that come up with testing
-- [ ] v0.1.0 beta
-- [ ] Test and fix more issues
+- [X] ~~Test on several platforms~~
+- [X] ~~Fix issues that come up with testing~~
+- [X] ~~v0.1.0 beta~~
+- [X] ~~Test and fix more issues~~
 - [ ] More betas
 - [ ] Enhancement Ideas
   - [ ] `authorized_keys` mode similar to SSH to allow one listener
