@@ -49,6 +49,7 @@ import re
 import contextlib
 import rnsh.args
 import pwd
+import bz2
 import rnsh.protocol as protocol
 import rnsh.helpers as helpers
 import rnsh.rnsh
@@ -362,11 +363,42 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                     processed = False
 
                 if channel.is_ready_to_send():
-                    stdin = data_buffer[:mdu]
-                    data_buffer = data_buffer[mdu:]
+                    def compress_adaptive(buf: bytes):
+                        comp_tries = RNS.RawChannelWriter.COMPRESSION_TRIES
+                        comp_try = 1
+                        comp_success = False
+                        
+                        chunk_len = len(buf)
+                        if chunk_len > RNS.RawChannelWriter.MAX_CHUNK_LEN:
+                            chunk_len = RNS.RawChannelWriter.MAX_CHUNK_LEN
+                        chunk_segment = None
+
+                        chunk_segment = None
+                        while chunk_len > 32 and comp_try < comp_tries:
+                            chunk_segment_length = int(chunk_len/comp_try)
+                            compressed_chunk = bz2.compress(buf[:chunk_segment_length])
+                            compressed_length = len(compressed_chunk)
+                            if compressed_length < protocol.StreamDataMessage.MAX_DATA_LEN and compressed_length < chunk_segment_length:
+                                comp_success = True
+                                break
+                            else:
+                                comp_try += 1
+
+                        if comp_success:
+                            chunk = compressed_chunk
+                            processed_length = chunk_segment_length
+                        else:
+                            chunk = bytes(buf[:protocol.StreamDataMessage.MAX_DATA_LEN])
+                            processed_length = len(chunk)
+
+                        return comp_success, processed_length, chunk
+
+                    comp_success, processed_length, chunk = compress_adaptive(data_buffer)
+                    stdin = chunk
+                    data_buffer = data_buffer[processed_length:]
                     eof = not sent_eof and stdin_eof and len(stdin) == 0
                     if len(stdin) > 0 or eof:
-                        channel.send(protocol.StreamDataMessage(protocol.StreamDataMessage.STREAM_ID_STDIN, stdin, eof))
+                        channel.send(protocol.StreamDataMessage(protocol.StreamDataMessage.STREAM_ID_STDIN, stdin, eof, comp_success))
                         sent_eof = eof
                         processed = True
 
