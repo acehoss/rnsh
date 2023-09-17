@@ -279,7 +279,6 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
             nonlocal stdin_eof
             try:
                 data = process.tty_read(sys.stdin.fileno())
-                log.debug(f"stdin {data}")
                 if data is not None:
                     data_buffer.extend(data)
             except EOFError:
