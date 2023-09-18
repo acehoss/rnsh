@@ -191,7 +191,6 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
     def link_established(lnk: RNS.Link):
         _reload_allowed_file()
         session.ListenerSession.allowed_file_identity_hashes = _allowed_file_identity_hashes
-        print(str(_allowed_file_identity_hashes))
         session.ListenerSession(session.RNSOutlet.get_outlet(lnk), lnk.get_channel(), loop)
     _destination.set_link_established_callback(link_established)
 
