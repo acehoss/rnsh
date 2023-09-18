@@ -69,6 +69,7 @@ class LSOutletBase(ABC):
 class ListenerSession:
     sessions: List[ListenerSession] = []
     allowed_identity_hashes: [any] = []
+    allowed_file_identity_hashes: [any] = []
     allow_all: bool = False
     allow_remote_command: bool = False
     default_command: [str] = []
@@ -183,7 +184,7 @@ class ListenerSession:
         if self.state not in [LSState.LSSTATE_WAIT_IDENT, LSState.LSSTATE_WAIT_VERS]:
             self._protocol_error(LSState.LSSTATE_WAIT_IDENT.name)
 
-        if not self.allow_all and identity.hash not in self.allowed_identity_hashes:
+        if not self.allow_all and identity.hash not in self.allowed_identity_hashes and identity.hash not in self.allowed_file_identity_hashes:
             self.terminate("Identity is not allowed.")
 
         self.remote_identity = identity

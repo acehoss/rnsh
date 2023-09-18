@@ -117,7 +117,13 @@ async def _rnsh_cli_main():
         return 0
 
     if args.listen:
-        # log.info("command " + args.command)
+        allowed_file = None
+        dest_len = (RNS.Reticulum.TRUNCATED_HASHLENGTH//8)*2
+        if os.path.isfile(os.path.expanduser("~/.config/rnsh/allowed_identities")):
+            allowed_file = os.path.expanduser("~/.config/rnsh/allowed_identities")
+        elif os.path.isfile(os.path.expanduser("~/.rnsh/allowed_identities")):
+            allowed_file = os.path.expanduser("~/.rnsh/allowed_identities")
+
         await listener.listen(configdir=args.config,
                               command=args.command_line,
                               identitypath=args.identity,
@@ -125,6 +131,7 @@ async def _rnsh_cli_main():
                               verbosity=args.verbose,
                               quietness=args.quiet,
                               allowed=args.allowed,
+                              allowed_file=allowed_file,
                               disable_auth=args.no_auth,
                               announce_period=args.announce,
                               no_remote_command=args.no_remote_cmd,

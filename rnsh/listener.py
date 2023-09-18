@@ -64,7 +64,9 @@ def _get_logger(name: str):
 _identity = None
 _reticulum = None
 _allow_all = False
+_allowed_file = None
 _allowed_identity_hashes = []
+_allowed_file_identity_hashes = []
 _cmd: [str] | None = None
 DATA_AVAIL_MSG = "data available"
 _finished: asyncio.Event = None
@@ -88,12 +90,37 @@ def _sigint_handler(sig, loop):
     else:
         raise KeyboardInterrupt()
 
+def _reload_allowed_file():
+    global _allowed_file, _allowed_file_identity_hashes
+    log = _get_logger("_listen")
+    if _allowed_file != None:
+        try:
+            with open(_allowed_file, "r") as file:
+                dest_len = (RNS.Reticulum.TRUNCATED_HASHLENGTH // 8) * 2
+                added = 0
+                line = 0
+                _allowed_file_identity_hashes = []
+                for allow in file.read().replace("\r", "").split("\n"):
+                    line += 1
+                    if len(allow) == dest_len:
+                        try:
+                            destination_hash = bytes.fromhex(allow)
+                            _allowed_file_identity_hashes.append(destination_hash)
+                            added += 1
+                        except Exception:
+                            log.debug(f"Discarded invalid Identity hash in {_allowed_file} at line {line}")
+
+                ms = "y" if added == 1 else "ies"
+                log.debug(f"Loaded {added} allowed identit{ms} from "+str(_allowed_file))
+        except Exception as e:
+            log.error(f"Error while reloading allowed indetities file: {e}")
+
 
 async def listen(configdir, command, identitypath=None, service_name=None, verbosity=0, quietness=0, allowed=None,
-                 disable_auth=None, announce_period=900, no_remote_command=True, remote_cmd_as_args=False,
+                 allowed_file=None, disable_auth=None, announce_period=900, no_remote_command=True, remote_cmd_as_args=False,
                  loop: asyncio.AbstractEventLoop = None):
-    global _identity, _allow_all, _allowed_identity_hashes, _reticulum, _cmd, _destination, _no_remote_command
-    global _remote_cmd_as_args, _finished
+    global _identity, _allow_all, _allowed_identity_hashes, _allowed_file, _allowed_file_identity_hashes
+    global _reticulum, _cmd, _destination, _no_remote_command, _remote_cmd_as_args, _finished
     log = _get_logger("_listen")
     if not loop:
         loop = asyncio.get_running_loop()
@@ -135,6 +162,10 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
         _allow_all = True
         session.ListenerSession.allow_all = True
     else:
+        if allowed_file is not None:
+            _allowed_file = allowed_file
+            _reload_allowed_file()
+
         if allowed is not None:
             for a in allowed:
                 try:
@@ -154,10 +185,13 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
                     log.error(str(e))
                     exit(1)
 
-    if len(_allowed_identity_hashes) < 1 and not disable_auth:
+    if (len(_allowed_identity_hashes) < 1 and len(_allowed_file_identity_hashes) < 1) and not disable_auth:
         log.warning("Warning: No allowed identities configured, rnsh will not accept any connections!")
 
     def link_established(lnk: RNS.Link):
+        _reload_allowed_file()
+        session.ListenerSession.allowed_file_identity_hashes = _allowed_file_identity_hashes
+        print(str(_allowed_file_identity_hashes))
         session.ListenerSession(session.RNSOutlet.get_outlet(lnk), lnk.get_channel(), loop)
     _destination.set_link_established_callback(link_established)
 

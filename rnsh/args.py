@@ -20,7 +20,7 @@ usage = \
 Usage:
     rnsh -l [-c <configdir>] [-i <identityfile> | -s <service_name>] [-v... | -q...] -p
     rnsh -l [-c <configdir>] [-i <identityfile> | -s <service_name>] [-v... | -q...] 
-            [-b <period>] (-n | -a <identity_hash> [-a <identity_hash>] ...) [-A | -C] 
+            [-b <period>] [-n] [-a <identity_hash>] ([-a <identity_hash>] ...) [-A | -C]
             [[--] <program> [<arg> ...]]
     rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] -p
     rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] [-N] [-m] [-w <timeout>] 
@@ -40,7 +40,9 @@ Options:
                                    user rnsh is running under will be used.
     -b --announce PERIOD         Announce on startup and every PERIOD seconds
                                  Specify 0 for PERIOD to announce on startup only.
-    -a HASH --allowed HASH       Specify identities allowed to connect
+    -a HASH --allowed HASH       Specify identities allowed to connect. Allowed identities
+                                   can also be specified in ~/.rnsh/allowed_identities or
+                                   ~/.config/rnsh/allowed_identities, one hash per line.
     -n --no-auth                 Disable authentication
     -N --no-id                   Disable identify on connect
     -A --remote-command-as-args  Concatenate remote command to argument list of <program>/shell
