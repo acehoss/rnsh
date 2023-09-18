@@ -231,6 +231,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
         loop = asyncio.get_running_loop()
         state = InitiatorState.IS_INITIAL
         data_buffer = bytearray(sys.stdin.buffer.read()) if not os.isatty(sys.stdin.fileno()) else bytearray()
+        line_buffer = bytearray()
 
         await _initiate_link(
             configdir=configdir,
@@ -274,13 +275,81 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
             # log.debug("WindowChanged")
             winch = True
 
+        esc = False
+        pre_esc = True
+        line_mode = False
+        line_flush = False
+        blind_write_count = 0
+        flush_chars = ["\x01", "\x03", "\x04", "\x05", "\x0c", "\x11", "\x13", "\x15", "\x19", "\t", "\x1A", "\x1B"]
+        def handle_escape(b):
+            nonlocal line_mode
+            if b == "~":
+                return "~"
+            elif b == "?":
+                os.write(1, "\n\r\n\rSupported rnsh escape sequences:".encode("utf-8"))
+                os.write(1, "\n\r  ~~  Send the escape character by typing it twice".encode("utf-8"))
+                os.write(1, "\n\r  ~.  Terminate session and exit immediately".encode("utf-8"))
+                os.write(1, "\n\r  ~L  Toggle line-interactive mode".encode("utf-8"))
+                os.write(1, "\n\r  ~?  Display this quick reference\n\r".encode("utf-8"))
+                os.write(1, "\n\r(Escape sequences are only recognized immediately after newline)\n\r".encode("utf-8"))
+            elif b == ".":
+                _link.teardown()
+            elif b == "L":
+                line_mode = not line_mode
+                if line_mode:
+                    os.write(1, "\n\rLine-interactive mode enabled\n\r".encode("utf-8"))
+                else:
+                    os.write(1, "\n\rLine-interactive mode disabled\n\r".encode("utf-8"))
+            
+            return None
+
         stdin_eof = False
         def stdin():
-            nonlocal stdin_eof
+            nonlocal stdin_eof, pre_esc, esc, line_mode
+            nonlocal line_flush, blind_write_count
             try:
-                data = process.tty_read(sys.stdin.fileno())
-                if data is not None:
-                    data_buffer.extend(data)
+                in_data = process.tty_read(sys.stdin.fileno())
+                if in_data is not None:
+                    data = bytearray()
+                    for b in bytes(in_data):
+                        c = chr(b)
+                        if c == "\r":
+                            pre_esc = True
+                            line_flush = True
+                            data.append(b)
+                        elif line_mode and c in flush_chars:
+                            line_flush = True
+                            data.append(b)
+                        elif line_mode and (c == "\b" or c == "\x7f"):
+                            if len(line_buffer)>0:
+                                line_buffer.pop(-1)
+                                blind_write_count -= 1
+                                os.write(1, "\b \b".encode("utf-8"))
+                        elif pre_esc == True and c == "~":
+                            pre_esc = False
+                            esc = True
+                        elif esc == True:
+                            ret = handle_escape(c)
+                            if ret != None:
+                                data.append(ord(ret))
+                            esc = False
+                        else:
+                            data.append(b)
+
+                    if not line_mode:
+                        data_buffer.extend(data)
+                    else:
+                        line_buffer.extend(data)
+                        if line_flush:
+                            data_buffer.extend(line_buffer)
+                            line_buffer.clear()
+                            os.write(1, ("\b \b"*blind_write_count).encode("utf-8"))
+                            line_flush = False
+                            blind_write_count = 0
+                        else:
+                            os.write(1, data)
+                            blind_write_count += len(data)
+
             except EOFError:
                 if os.isatty(0):
                     data_buffer.extend(process.CTRL_D)
