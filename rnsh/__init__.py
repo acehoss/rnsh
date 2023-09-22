@@ -23,7 +23,6 @@
 import os
 module_abs_filename = os.path.abspath(__file__)
 module_dir = os.path.dirname(module_abs_filename)
-# print(os.path.dirname(module_dir))
 
 def _get_version():
     def pkg_res_version():
