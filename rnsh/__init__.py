@@ -26,17 +26,26 @@ module_dir = os.path.dirname(module_abs_filename)
 # print(os.path.dirname(module_dir))
 
 def _get_version():
+    def pkg_res_version():
+        import pkg_resources
+        return pkg_resources.get_distribution("rnsh").version
+
+    def tomli_version():
+        import tomli
+        return tomli.load(open(os.path.join(os.path.dirname(module_dir), "pyproject.toml"), "rb"))["tool"]["poetry"]["version"]
+
     try:
-        try:
-            import tomli
-            return tomli.load(open(os.path.join(os.path.dirname(module_dir), "pyproject.toml"), "rb"))["tool"]["poetry"]["version"]
-        except:
+        if (os.path.isfile(os.path.join(os.path.dirname(module_dir), "pyproject.toml"))):
             try:
-                import pkg_resources
-                return pkg_resources.get_distribution("rnsh").version
+                return tomli_version()
             except:
                 return "0.0.0"
-
+        else:
+            try:
+                return pkg_res_version()
+            except:
+                return "0.0.0"
+                
     except:
         return "0.0.0"
 
