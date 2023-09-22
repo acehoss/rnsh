@@ -1,6 +1,6 @@
 import rnsh.args
 import shlex
-import docopt
+from rnsh import docopt
 
 def test_program_args():
     docopt_threw = False
