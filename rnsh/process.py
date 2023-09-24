@@ -525,7 +525,6 @@ class CallbackSubprocess:
         Write bytes to the stdin of the child process.
         :param data: bytes to write
         """
-        self._log.debug(f"write({data})")
         os.write(self._child_stdin, data)
 
     def set_winsize(self, r: int, c: int, h: int, v: int):

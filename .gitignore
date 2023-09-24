@@ -6,3 +6,5 @@ testconfig/
 /build/
 /dist/
 .pytest_cache/
+*__pycache__
+/RNS

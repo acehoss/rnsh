@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "rnsh"
-version = "0.1.1"
+version = "0.1.2"
 description = "Shell over Reticulum"
 authors = ["acehoss <acehoss@acehoss.net>"]
 license = "MIT"
@@ -9,7 +9,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.7"
 docopt = "^0.6.2"
-rns = "^0.5.3"
+rns = "^0.5.9"
 # rns = { git = "https://github.com/acehoss/Reticulum.git", branch = "feature/channel" }
 # rns = { path = "../Reticulum/", develop = true }
 tomli = "^2.0.1"

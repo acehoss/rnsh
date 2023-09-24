@@ -12,6 +12,7 @@ from typing import TypeVar, Generic, Callable, List
 from abc import abstractmethod, ABC
 from multiprocessing import Manager
 import os
+import bz2
 import RNS
 
 import logging as __logging
@@ -204,31 +205,59 @@ class ListenerSession:
             await asyncio.sleep(0)
 
     def pump(self) -> bool:
+        def compress_adaptive(buf: bytes):
+            comp_tries = RNS.RawChannelWriter.COMPRESSION_TRIES
+            comp_try = 1
+            comp_success = False
+            
+            chunk_len = len(buf)
+            if chunk_len > RNS.RawChannelWriter.MAX_CHUNK_LEN:
+                chunk_len = RNS.RawChannelWriter.MAX_CHUNK_LEN
+            chunk_segment = None
+
+            chunk_segment = None
+            while chunk_len > 32 and comp_try < comp_tries:
+                chunk_segment_length = int(chunk_len/comp_try)
+                compressed_chunk = bz2.compress(buf[:chunk_segment_length])
+                compressed_length = len(compressed_chunk)
+                if compressed_length < protocol.StreamDataMessage.MAX_DATA_LEN and compressed_length < chunk_segment_length:
+                    comp_success = True
+                    break
+                else:
+                    comp_try += 1
+
+            if comp_success:
+                chunk = compressed_chunk
+                processed_length = chunk_segment_length
+            else:
+                chunk = bytes(buf[:protocol.StreamDataMessage.MAX_DATA_LEN])
+                processed_length = len(chunk)
+
+            return comp_success, processed_length, chunk
+
         try:
             if self.state != LSState.LSSTATE_RUNNING:
                 return False
             elif not self.channel.is_ready_to_send():
                 return False
             elif len(self.stderr_buf) > 0:
-                mdu = protocol.StreamDataMessage.MAX_DATA_LEN
-                data = self.stderr_buf[:mdu]
-                self.stderr_buf = self.stderr_buf[mdu:]
+                comp_success, processed_length, data = compress_adaptive(self.stderr_buf)
+                self.stderr_buf = self.stderr_buf[processed_length:]
                 send_eof = self.process.stderr_eof and len(data) == 0 and not self.stderr_eof_sent
                 self.stderr_eof_sent = self.stderr_eof_sent or send_eof
                 msg = protocol.StreamDataMessage(protocol.StreamDataMessage.STREAM_ID_STDERR,
-                                                 data, send_eof)
+                                                 data, send_eof, comp_success)
                 self.send(msg)
                 if send_eof:
                     self.stderr_eof_sent = True
                 return True
             elif len(self.stdout_buf) > 0:
-                mdu = protocol.StreamDataMessage.MAX_DATA_LEN
-                data = self.stdout_buf[:mdu]
-                self.stdout_buf = self.stdout_buf[mdu:]
+                comp_success, processed_length, data = compress_adaptive(self.stdout_buf)
+                self.stdout_buf = self.stdout_buf[processed_length:]
                 send_eof = self.process.stdout_eof and len(data) == 0 and not self.stdout_eof_sent
                 self.stdout_eof_sent = self.stdout_eof_sent or send_eof
                 msg = protocol.StreamDataMessage(protocol.StreamDataMessage.STREAM_ID_STDOUT,
-                                                 data, send_eof)
+                                                 data, send_eof, comp_success)
                 self.send(msg)
                 if send_eof:
                     self.stdout_eof_sent = True
