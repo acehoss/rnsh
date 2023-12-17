@@ -126,13 +126,13 @@ async def do_connected_test(listener_args: str, initiator_args: str, test: calla
         initiator_args = initiator_args.replace("dh", dh)
         listener_args = listener_args.replace("iih", iih)
         with tests.helpers.SubprocessReader(name="listener", argv=shlex.split(f"poetry run -- rnsh -l -c \"{td}\" {listener_args}")) as listener, \
-                tests.helpers.SubprocessReader(name="initiator", argv=shlex.split(f"poetry run -- rnsh -c \"{td}\" {initiator_args}")) as initiator:
+                tests.helpers.SubprocessReader(name="initiator", argv=shlex.split(f"poetry run -- rnsh -q -c \"{td}\" {initiator_args}")) as initiator:
             # listener startup
             listener.start()
             await asyncio.sleep(0.1)
             assert listener.process.running
             # wait for process to start up
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
             # read the output
             text = listener.read().decode("utf-8")
             assert text.index(dh) is not None
@@ -166,7 +166,7 @@ async def test_rnsh_get_echo_through():
         while initiator.return_code is None and time.time() - start_time < 3:
             await asyncio.sleep(0.1)
         text = initiator.read().decode("utf-8").replace("\r", "").replace("\n", "")
-        assert text[len(text)-len(cwd):] == cwd
+        assert text == cwd
 
     await do_connected_test("-n -C -- /bin/pwd", "dh", test)
 
@@ -182,7 +182,7 @@ async def test_rnsh_no_ident():
         while initiator.return_code is None and time.time() - start_time < 3:
             await asyncio.sleep(0.1)
         text = initiator.read().decode("utf-8").replace("\r", "").replace("\n", "")
-        assert text[len(text)-len(cwd):] == cwd
+        assert text == cwd
 
     await do_connected_test("-n -C -- /bin/pwd", "-N dh", test)
 
@@ -214,7 +214,7 @@ async def test_rnsh_valid_ident():
         while initiator.return_code is None and time.time() - start_time < 3:
             await asyncio.sleep(0.1)
         text = initiator.read().decode("utf-8").replace("\r", "").replace("\n", "")
-        assert text[len(text)-len(cwd):] == cwd
+        assert (text == cwd)
 
     await do_connected_test("-a iih -C -- /bin/pwd", "dh", test)
 

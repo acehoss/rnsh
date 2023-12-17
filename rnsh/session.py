@@ -147,10 +147,11 @@ class ListenerSession:
                     self.send(protocol.ErrorMessage(error, True))
             self.state = LSState.LSSTATE_ERROR
             self._terminate_process()
-            self._call(self._prune, max(self.outlet.rtt * 3, 5))
+            self._call(self._prune, max(self.outlet.rtt * 3, process.CallbackSubprocess.PROCESS_PIPE_TIME+5))
 
     def _prune(self):
         self.state = LSState.LSSTATE_TEARDOWN
+        self._log.debug("Pruning session")
         with contextlib.suppress(ValueError):
             self.sessions.remove(self)
         with contextlib.suppress(Exception):
