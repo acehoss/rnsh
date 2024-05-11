@@ -287,7 +287,7 @@ Process messages received from listener.
 - [X] ~~Test and fix more issues~~
 - [ ] More betas
 - [ ] Enhancement Ideas
-  - [ ] `authorized_keys` mode similar to SSH to allow one listener
+  - [x] `authorized_keys` mode similar to SSH to allow one listener
         process to serve multiple users
   - [ ] Git over `rnsh` (git remote helper)
   - [ ] Sliding window acknowledgements for improved throughput
