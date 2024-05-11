@@ -25,6 +25,17 @@ point still may introduce breaking changes, especially in the
 protocol layers of the software.
 
 ## Recent Changes
+### v0.1.3
+- Fix an issue where disconnecting a session using ~. would result in further connections to
+  the same initiator would appear to hang.
+- Setting `-q` will suppress the pre-connect spinners
+
+### v0.1.2
+- Adaptive compression (RNS update) provides significant performance improvements ([PR](https://github.com/acehoss/rnsh/pull/24))
+- Allowed identities file - put allowed identities in a file instead of on the command
+  line for easier service invocations. ([see PR for details](https://github.com/acehoss/rnsh/pull/25))
+- Escape Sequences, Session Termination & Line-Interactive Mode ([see PR for details](https://github.com/acehoss/rnsh/pull/26))
+
 ### v0.1.1
 - Fix issue with intermittent data corruption
 

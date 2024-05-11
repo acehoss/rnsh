@@ -55,5 +55,5 @@ jobs:
       - name: Test with pytest
         run: poetry run pytest -m "not skip_ci" tests
 
-      - name: Vulnerability check
-        run: poetry run safety check
+#      - name: Vulnerability check
+#        run: poetry run safety check

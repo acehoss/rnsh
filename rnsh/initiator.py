@@ -73,7 +73,7 @@ _loop: asyncio.AbstractEventLoop | None = None
 
 
 async def _check_finished(timeout: float = 0):
-    return await process.event_wait(_finished, timeout=timeout)
+    return _finished is not None and await process.event_wait(_finished, timeout=timeout)
 
 
 def _sigint_handler(sig, loop):
@@ -120,8 +120,8 @@ async def _spin_pipe(until: callable = None, msg=None, timeout: float | None = N
         return True
 
 
-async def _spin(until: callable = None, msg=None, timeout: float | None = None) -> bool:
-    if os.isatty(1):
+async def _spin(until: callable = None, msg=None, timeout: float | None = None, quiet: bool = False) -> bool:
+    if not quiet and os.isatty(1):
         return await _spin_tty(until, msg, timeout)
     else:
         return await _spin_pipe(until, msg, timeout)
@@ -184,7 +184,7 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
         RNS.Transport.request_path(destination_hash)
         log.info(f"Requesting path...")
         if not await _spin(until=lambda: RNS.Transport.has_path(destination_hash), msg="Requesting path...",
-                           timeout=timeout):
+                           timeout=timeout, quiet=quietness > 0):
             raise RemoteExecutionError("Path not found")
 
     if _destination is None:
@@ -205,7 +205,7 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
 
     log.info(f"Establishing link...")
     if not await _spin(until=lambda: _link.status == RNS.Link.ACTIVE, msg="Establishing link...",
-                       timeout=timeout):
+                       timeout=timeout, quiet=quietness > 0):
         raise RemoteExecutionError("Could not establish link with " + RNS.prettyhexrep(destination_hash))
 
     log.debug("Have link")
@@ -240,7 +240,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
             quietness=quietness,
             noid=noid,
             destination=destination,
-            timeout=timeout,
+            timeout=timeout
         )
 
         if not _link or _link.status not in [RNS.Link.ACTIVE, RNS.Link.PENDING]:
@@ -253,7 +253,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
         channel.add_message_handler(_client_message_handler)
 
         # Next step after linking and identifying: send version
-        # if not await _spin(lambda: messenger.is_outlet_ready(outlet), timeout=5):
+        # if not await _spin(lambda: messenger.is_outlet_ready(outlet), timeout=5, quiet=quietness > 0):
         #     print("Error bringing up link")
         #     return 253
 
@@ -374,7 +374,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                 except:
                     pass
 
-        await _spin(lambda: channel.is_ready_to_send(), "Waiting for channel...", 1)
+        await _spin(lambda: channel.is_ready_to_send(), "Waiting for channel...", 1, quietness > 0)
         channel.send(protocol.ExecuteCommandMesssage(cmdline=command,
                                                      pipe_stdin=not os.isatty(0),
                                                      pipe_stdout=not os.isatty(1),

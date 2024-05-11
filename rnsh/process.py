@@ -420,6 +420,7 @@ def _launch_child(cmd_line: list[str], env: dict[str, str], stdin_is_pipe: bool,
 class CallbackSubprocess:
     # time between checks of child process
     PROCESS_POLL_TIME: float = 0.1
+    PROCESS_PIPE_TIME: int = 60
 
     def __init__(self, argv: [str], env: dict, loop: asyncio.AbstractEventLoop, stdout_callback: callable,
                  stderr_callback: callable, terminated_callback: callable, stdin_is_pipe: bool, stdout_is_pipe: bool,
@@ -456,20 +457,26 @@ class CallbackSubprocess:
         self._stderr_is_pipe = stderr_is_pipe
 
     def _ensure_pipes_closed(self):
-        self._log.debug("Ensuring pipes are closed")
         stdin = self._child_stdin
         stdout = self._child_stdout
         stderr = self._child_stderr
-        fds = list(filter(lambda x: x is not None, list({stdin, stdout, stderr})))
-        for fd in fds:
-            self._log.debug(f"Closing fd {fd}")
-            with contextlib.suppress(OSError):
-                os.close(self._child_stdin)
-            with contextlib.suppress(OSError):
-                tty_unset_reader_callbacks(fd)
-        self._child_stdin = None
-        self._child_stdout = None
-        self._child_stderr = None
+        fds = set(filter(lambda x: x is not None, list({stdin, stdout, stderr})))
+        self._log.debug(f"Queuing close of pipes for ended process (fds: {fds})")
+
+        def ensure_pipes_closed_inner():
+            self._log.debug(f"Ensuring pipes are closed (fds: {fds})")
+            for fd in fds:
+                self._log.debug(f"Closing fd {fd}")
+                with contextlib.suppress(OSError):
+                    tty_unset_reader_callbacks(fd)
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+
+            self._child_stdin = None
+            self._child_stdout = None
+            self._child_stderr = None
+
+        self._loop.call_later(CallbackSubprocess.PROCESS_PIPE_TIME, ensure_pipes_closed_inner)
 
     def terminate(self, kill_delay: float = 1.0):
         """
@@ -597,6 +604,7 @@ class CallbackSubprocess:
             self._child_stdout, \
             self._child_stderr = _launch_child(self._command, env, self._stdin_is_pipe, self._stdout_is_pipe,
                                                self._stderr_is_pipe)
+        self._log.debug("Started pid %d, fds: %d, %d, %d", self.pid, self._child_stdin, self._child_stdout, self._child_stderr)
 
         def poll():
             # self.log.debug("poll")

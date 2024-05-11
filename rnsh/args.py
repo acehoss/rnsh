@@ -105,7 +105,14 @@ class Args:
                 self.program_args = args.get("<arg>", None) or []
             self.no_id = args.get("--no-id", None) or False
             self.mirror = args.get("--mirror", None) or False
-            self.timeout = args.get("--timeout", None) or RNS.Transport.PATH_REQUEST_TIMEOUT
+            timeout = args.get("--timeout", None)
+            self.timeout = None
+            try:
+                if timeout:
+                    self.timeout = int(timeout)
+            except ValueError:
+                print("Invalid value for --timeout")
+                sys.exit(1)
             self.destination = args.get("<destination_hash>", None)
             self.help = args.get("--help", None) or False
             self.command_line = [self.program] if self.program else []
