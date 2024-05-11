@@ -283,25 +283,26 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
         flush_chars = ["\x01", "\x03", "\x04", "\x05", "\x0c", "\x11", "\x13", "\x15", "\x19", "\t", "\x1A", "\x1B"]
         def handle_escape(b):
             nonlocal line_mode
-            if b == "~":
-                return "~"
-            elif b == "?":
+            if b == "?":
                 os.write(1, "\n\r\n\rSupported rnsh escape sequences:".encode("utf-8"))
                 os.write(1, "\n\r  ~~  Send the escape character by typing it twice".encode("utf-8"))
                 os.write(1, "\n\r  ~.  Terminate session and exit immediately".encode("utf-8"))
                 os.write(1, "\n\r  ~L  Toggle line-interactive mode".encode("utf-8"))
                 os.write(1, "\n\r  ~?  Display this quick reference\n\r".encode("utf-8"))
                 os.write(1, "\n\r(Escape sequences are only recognized immediately after newline)\n\r".encode("utf-8"))
+                return None
             elif b == ".":
                 _link.teardown()
+                return None
             elif b == "L":
                 line_mode = not line_mode
                 if line_mode:
                     os.write(1, "\n\rLine-interactive mode enabled\n\r".encode("utf-8"))
                 else:
                     os.write(1, "\n\rLine-interactive mode disabled\n\r".encode("utf-8"))
-            
-            return None
+                return None
+
+            return b
 
         stdin_eof = False
         def stdin():
@@ -318,9 +319,11 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                             line_flush = True
                             data.append(b)
                         elif line_mode and c in flush_chars:
+                            pre_esc = False
                             line_flush = True
                             data.append(b)
                         elif line_mode and (c == "\b" or c == "\x7f"):
+                            pre_esc = False
                             if len(line_buffer)>0:
                                 line_buffer.pop(-1)
                                 blind_write_count -= 1
@@ -331,9 +334,12 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                         elif esc == True:
                             ret = handle_escape(c)
                             if ret != None:
+                                if ret != "~":
+                                    data.append(ord("~"))
                                 data.append(ord(ret))
                             esc = False
                         else:
+                            pre_esc = False
                             data.append(b)
 
                     if not line_mode:
