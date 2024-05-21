@@ -25,6 +25,9 @@ point still may introduce breaking changes, especially in the
 protocol layers of the software.
 
 ## Recent Changes
+### v0.1.4
+- Fix invalid escape sequence handling for terminal escape sequences
+
 ### v0.1.3
 - Fix an issue where disconnecting a session using ~. would result in further connections to
   the same initiator would appear to hang.
@@ -301,3 +304,5 @@ files using the same method discussed in
 It's not terribly fast currently, due to the round-trip rule 
 enforced by the protocol. Sliding window acknowledgements will
 speed this up significantly.
+
+Running tests: `poetry run pytest tests`
