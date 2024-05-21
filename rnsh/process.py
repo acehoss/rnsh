@@ -134,7 +134,7 @@ def tty_read_poll(fd: int) -> bytes:
     except EOFError:
         raise
     except Exception as ex:
-        module_logger.error("tty_read error: {ex}")
+        module_logger.error(f"tty_read error: {ex}")
     return result
 
 

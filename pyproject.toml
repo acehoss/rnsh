@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "rnsh"
-version = "0.1.3"
+version = "0.1.4"
 description = "Shell over Reticulum"
 authors = ["acehoss <acehoss@acehoss.net>"]
 license = "MIT"
@@ -8,11 +8,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.7"
-docopt = "^0.6.2"
-rns = ">=0.5.9"
-# rns = { git = "https://github.com/acehoss/Reticulum.git", branch = "feature/channel" }
-# rns = { path = "../Reticulum/", develop = true }
-tomli = "^2.0.1"
+rns = ">=0.7.4"
 
 [tool.poetry.scripts]
 rnsh = 'rnsh.rnsh:rnsh_cli'
@@ -22,6 +18,7 @@ pytest = "^7.2.1"
 setuptools = "^67.2.0"
 pytest-asyncio = "^0.20.3"
 safety = "^2.3.5"
+tomli = "^2.0.1"
 
 [tool.pytest.ini_options]
 markers = [

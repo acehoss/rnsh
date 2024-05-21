@@ -1,8 +1,8 @@
 from typing import TypeVar
 import RNS
 import rnsh
-import docopt
 import sys
+from rnsh import docopt
 
 _T = TypeVar("_T")
 
