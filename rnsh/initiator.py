@@ -448,21 +448,23 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                         chunk_segment = None
 
                         chunk_segment = None
+                        max_data_len = channel.mdu - protocol.StreamDataMessage.OVERHEAD
                         while chunk_len > 32 and comp_try < comp_tries:
                             chunk_segment_length = int(chunk_len/comp_try)
                             compressed_chunk = bz2.compress(buf[:chunk_segment_length])
                             compressed_length = len(compressed_chunk)
-                            if compressed_length < protocol.StreamDataMessage.MAX_DATA_LEN and compressed_length < chunk_segment_length:
+                            if compressed_length < max_data_len and compressed_length < chunk_segment_length:
                                 comp_success = True
                                 break
                             else:
                                 comp_try += 1
 
                         if comp_success:
+                            diff = max_data_len - len(compressed_chunk)
                             chunk = compressed_chunk
                             processed_length = chunk_segment_length
                         else:
-                            chunk = bytes(buf[:protocol.StreamDataMessage.MAX_DATA_LEN])
+                            chunk = bytes(buf[:max_data_len])
                             processed_length = len(chunk)
 
                         return comp_success, processed_length, chunk
