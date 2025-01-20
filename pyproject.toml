@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "rnsh"
-version = "0.1.4"
+version = "0.1.5"
 description = "Shell over Reticulum"
 authors = ["acehoss <acehoss@acehoss.net>"]
 license = "MIT"
@@ -8,7 +8,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.7"
-rns = ">=0.7.4"
+rns = ">=0.9.0"
 
 [tool.poetry.scripts]
 rnsh = 'rnsh.rnsh:rnsh_cli'
