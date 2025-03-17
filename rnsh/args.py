@@ -18,17 +18,23 @@ def _split_array_at(arr: [_T], at: _T) -> ([_T], [_T]):
 usage = \
 '''
 Usage:
-    rnsh -l [-c <configdir>] [-i <identityfile> | -s <service_name>] [-v... | -q...] -p
-    rnsh -l [-c <configdir>] [-i <identityfile> | -s <service_name>] [-v... | -q...] 
-            [-b <period>] [-n] [-a <identity_hash>] ([-a <identity_hash>] ...) [-A | -C]
-            [[--] <program> [<arg> ...]]
+    rnsh [--socks5] -l [-c <configdir>] [-i <identityfile> | -s <service_name>] [-v... | -q...] -p
+    rnsh [--socks5] -l [-c <configdir>] [-i <identityfile> | -s <service_name>] [-v... | -q...] 
+                    [-b <period>] [-n] [-a <identity_hash>] ([-a <identity_hash>] ...) [-A | -C]
+                    [[--] <program> [<arg> ...]]
     rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] -p
+    rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] [-N] [-m] [-w <timeout>]
+         [--socks5 [--socks5-host <host>] [--socks5-port <port>]]
+         <destination_hash>
     rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] [-N] [-m] [-w <timeout>] 
          <destination_hash> [[--] <program> [<arg> ...]]
     rnsh -h
     rnsh --version
 
 Options:
+    --socks5                     Enable socks5 proxy mode.
+    --socks5-host HOST           SOCKS5 proxy host
+    --socks5-port PORT           SOCKS5 proxy port
     -c DIR --config DIR          Alternate Reticulum config directory to use
     -i FILE --identity FILE      Specific identity file to use
     -s NAME --service NAME       Service name for identity file if not default
@@ -79,6 +85,20 @@ class Args:
             args = docopt.docopt(usage, argv=self.docopts_argv[1:], version=f"rnsh {rnsh.__version__}")
             # json.dump(args, sys.stdout)
 
+            self.socks5 = "--socks5" in args
+            self.socks5_host = args.get("--socks5-host") or "127.0.0.1"
+            try:
+                if "--socks5-port" in args:
+                    port_string = args.get("--socks5-port")
+                    if port_string is None:
+                        self.socks5_port = 1080
+                    else:
+                        self.socks5_port = int(port_string)
+                else:
+                    self.socks5_port = 1080
+            except ValueError:
+                print("Invalid value for --socks5-port")
+                sys.exit(1)
             self.listen = args.get("--listen", None) or False
             self.service_name = args.get("--service", None)
             if self.listen and (self.service_name is None or len(self.service_name) > 0):
