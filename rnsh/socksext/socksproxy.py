@@ -159,15 +159,7 @@ class LinkPool:
         self.responses = {}
         print("Initializing Reticulum network...")
         self.identity = self.load_or_create_identity()
-        self.target_identity = RNS.Identity.recall(destination_hash)
-        if not self.target_identity:
-            print(f"Waiting for identity of {destination_hash.hex()}...")
-            timeout = time.time() + 10
-            while not self.target_identity and time.time() < timeout:
-                self.target_identity = RNS.Identity.recall(destination_hash)
-                time.sleep(1)
-        if not self.target_identity:
-            raise RuntimeError(f"Could not recall identity for {destination_hash.hex()}")
+        self.target_identity = self.wait_for_identity(self.destination_hash)
         self.target_destination = RNS.Destination(
             self.target_identity,
             RNS.Destination.OUT,
@@ -185,6 +177,23 @@ class LinkPool:
             identity.to_file(identity_file)
             print("Created and saved proxy identity")
         return identity
+
+    def wait_for_identity(self, destination_hash: bytes, timeout: int = 60*30):
+        """Wait for the identity to be recalled, with path request"""
+        target_identity = RNS.Identity.recall(destination_hash)
+        if not target_identity:
+            print(f"Waiting for identity of {destination_hash.hex()}...")
+            RNS.Transport.request_path(destination_hash)  # Force path discovery
+            start_time = time.time()
+            while not target_identity and time.time() - start_time < timeout:
+                target_identity = RNS.Identity.recall(destination_hash)
+                if not target_identity:
+                    time.sleep(1)
+                    print(f"Still waiting... Elapsed: {int(time.time() - start_time)}s")
+            if not target_identity:
+                raise RuntimeError(f"Could not recall identity for {destination_hash.hex()} after {timeout}s")
+            print(f"Identity recalled for {destination_hash.hex()}")
+        return target_identity
 
     def start(self):
         self.running = True
@@ -301,14 +310,13 @@ class LinkPool:
 
     def handle_channel_message(self, message, link_id):
         try:
-            # Parse bytes directly, no full decode
             data = message.data
             parts = data.split(b":", 2)
             if len(parts) < 2:
                 print(f"Invalid message format on link {link_id}")
                 return
-            command = parts[0].decode('utf-8')  # Command is ASCII
-            handler_id = int(parts[1].decode('utf-8'))  # Handler ID is ASCII
+            command = parts[0].decode('utf-8')
+            handler_id = int(parts[1].decode('utf-8'))
             payload = parts[2] if len(parts) > 2 else b""
 
             with self.lock:
