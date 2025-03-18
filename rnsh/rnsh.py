@@ -48,12 +48,11 @@ import rnsh.session as session
 import re
 import contextlib
 import rnsh.args
-import pwd
-import rnsh.protocol as protocol
-import rnsh.helpers as helpers
 import rnsh.loop
 import rnsh.listener as listener
 import rnsh.initiator as initiator
+from rnsh.socksext.socksproxy import SOCKS5Proxy
+from rnsh.socksext.counterpart import SOCKS5CounterPart
 
 module_logger = __logging.getLogger(__name__)
 
@@ -104,12 +103,11 @@ def print_identity(configdir, identitypath, service_name, include_destination: b
 verbose_set = False
 
 
-async def _rnsh_cli_main():
+async def _rnsh_cli_main(args):
     global verbose_set
     log = _get_logger("main")
     _loop = asyncio.get_running_loop()
     rnslogging.set_main_loop(_loop)
-    args = rnsh.args.Args(sys.argv)
     verbose_set = args.verbose > 0
 
     if args.print_identity:
@@ -156,12 +154,43 @@ async def _rnsh_cli_main():
         return 1
 
 
+
+async def _rnsocks_cli_main(args):
+    global verbose_set
+    log = _get_logger("main")
+    _loop = asyncio.get_running_loop()
+    rnslogging.set_main_loop(_loop)
+    args = rnsh.args.Args(sys.argv)
+    verbose_set = args.verbose > 0
+
+    if args.listen:
+        cpart = SOCKS5CounterPart()
+        cpart.run()
+    else:
+        if args.destination is None:
+            print("No destination specified for socks5 client mode, exiting")
+            return 1
+        host = args.socks5_host or "127.0.0.1"
+        port = 1080
+        if args.socks5_port is not None:
+            try:
+                port = int(args.socks5_port)
+            except Exception:
+                print("Invalid socks5 port specified, exiting")
+                return 1
+        proxy = SOCKS5Proxy(host=host, port=port, destination_hash=args.destination)
+        proxy.start()
+
 def rnsh_cli():
     global verbose_set
     return_code = 1
     exc = None
     try:
-        return_code = asyncio.run(_rnsh_cli_main())
+        args = rnsh.args.Args(sys.argv)
+        if args.socks5:
+            return_code = asyncio.run(_rnsocks_cli_main(args))
+        else:
+            return_code = asyncio.run(_rnsh_cli_main(args))
     except SystemExit:
         pass
     except KeyboardInterrupt:
