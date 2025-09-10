@@ -95,6 +95,27 @@ def test_program_listen_config_print():
     assert not docopt_threw
 
 
+def test_service_name_default_listener():
+    docopt_threw = False
+    try:
+        args = rnsh.args.Args(shlex.split("rnsh -l -p"))
+        assert args.listen
+        assert args.service_name == rnsh.args.DEFAULT_SERVICE_NAME
+    except docopt.DocoptExit:
+        docopt_threw = True
+    assert not docopt_threw
+
+
+def test_service_name_specified_listener():
+    docopt_threw = False
+    try:
+        args = rnsh.args.Args(shlex.split("rnsh -l -s custom -p"))
+        assert args.listen
+        assert args.service_name == "custom"
+    except docopt.DocoptExit:
+        docopt_threw = True
+    assert not docopt_threw
+
 def test_split_at():
     a, b = rnsh.args._split_array_at(["one", "two", "three"], "two")
     assert a == ["one"]

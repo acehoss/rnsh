@@ -81,7 +81,8 @@ class Args:
 
             self.listen = args.get("--listen", None) or False
             self.service_name = args.get("--service", None)
-            if self.listen and (self.service_name is None or len(self.service_name) > 0):
+            # Default service name only when listening and not explicitly provided
+            if self.listen and (self.service_name is None or len(self.service_name) == 0):
                 self.service_name = DEFAULT_SERVICE_NAME
             self.identity = args.get("--identity", None)
             self.config = args.get("--config", None)

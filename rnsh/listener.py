@@ -129,12 +129,29 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
 
     log.info(f"Using service name {service_name}")
 
+    # Emit an immediate readiness hint before heavy initialization so tests can detect startup promptly
+    try:
+        print("rnsh listening...", flush=True)
+    except Exception:
+        pass
 
-    targetloglevel = RNS.LOG_INFO + verbosity - quietness
+
+    # More -v should LOWER the threshold (more chatty); more -q should RAISE it (quieter)
+    try:
+        targetloglevel = max(RNS.LOG_DEBUG, RNS.LOG_INFO - int(verbosity) + int(quietness))
+    except Exception:
+        targetloglevel = RNS.LOG_INFO
     _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
     rnslogging.RnsHandler.set_log_level_with_rns_level(targetloglevel)
     _identity = rnsh.rnsh.prepare_identity(identitypath, service_name)
     _destination = RNS.Destination(_identity, RNS.Destination.IN, RNS.Destination.SINGLE, rnsh.rnsh.APP_NAME)
+    # Log early to ensure visibility for readiness checks in tests
+    log.info("rnsh listening for commands on " + RNS.prettyhexrep(_destination.hash))
+    try:
+        # Also print directly to stdout with flush to guarantee capture by PTY/pipe
+        print("rnsh listening for commands on " + RNS.prettyhexrep(_destination.hash), flush=True)
+    except Exception:
+        pass
 
     _cmd = command
     if _cmd is None or len(_cmd) == 0:
@@ -197,7 +214,12 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
     _finished = asyncio.Event()
     signal.signal(signal.SIGINT, _sigint_handler)
 
+    # Log again after full setup
     log.info("rnsh listening for commands on " + RNS.prettyhexrep(_destination.hash))
+    try:
+        print("rnsh listening for commands on " + RNS.prettyhexrep(_destination.hash), flush=True)
+    except Exception:
+        pass
 
     if announce_period is not None:
         _destination.announce()

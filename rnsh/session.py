@@ -343,7 +343,9 @@ class ListenerSession:
 
     def _handle_message(self, message: RNS.MessageBase):
         if self.state == LSState.LSSTATE_WAIT_IDENT:
-            self._protocol_error("Identification required")
+            # Ignore any messages until the initiator has identified to avoid race conditions
+            # between identity announcement and early protocol messages.
+            self._log.debug("Ignoring message while waiting for identification")
             return
         if self.state == LSState.LSSTATE_WAIT_VERS:
             if not isinstance(message, protocol.VersionInfoMessage):
