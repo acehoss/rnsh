@@ -25,6 +25,10 @@ point still may introduce breaking changes, especially in the
 protocol layers of the software.
 
 ## Recent Changes
+### v0.1.6
+- Fix listener `-s/--service` parsing so provided service names are honored. This ensures
+  different service names use distinct identity files and destination hashes.
+
 ### v0.1.4
 - Fix invalid escape sequence handling for terminal escape sequences
 

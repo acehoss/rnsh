@@ -109,6 +109,32 @@ async def test_rnsh_get_listener_id_and_dest() -> [int]:
 
 @pytest.mark.skip_ci
 @pytest.mark.asyncio
+async def test_rnsh_service_name_changes_destination():
+    with tests.helpers.tempdir() as td:
+        # default service
+        with tests.helpers.SubprocessReader(name="getid1", argv=shlex.split(f"poetry run -- rnsh -l -c \"{td}\" -p")) as w1:
+            w1.start()
+            await tests.helpers.wait_for_condition_async(lambda: not w1.process.running, 5)
+            text1 = w1.read().decode("utf-8").replace("\r", "").replace("\n", "")
+            m1 = re.search(r"<([a-f0-9]{32})>[^<]+<([a-f0-9]{32})>", text1)
+            assert m1 is not None
+            dh1 = m1.group(2)
+
+        # custom service name should use different identity file and thus different destination
+        with tests.helpers.SubprocessReader(name="getid2", argv=shlex.split(f"poetry run -- rnsh -l -s custom -c \"{td}\" -p")) as w2:
+            w2.start()
+            await tests.helpers.wait_for_condition_async(lambda: not w2.process.running, 5)
+            text2 = w2.read().decode("utf-8").replace("\r", "").replace("\n", "")
+            assert text2.index('Using service name "custom"') is not None
+            m2 = re.search(r"<([a-f0-9]{32})>[^<]+<([a-f0-9]{32})>", text2)
+            assert m2 is not None
+            dh2 = m2.group(2)
+
+        assert dh1 != dh2
+
+
+@pytest.mark.skip_ci
+@pytest.mark.asyncio
 async def test_rnsh_get_initiator_id() -> [int]:
     with tests.helpers.tempdir() as td:
         ih = await get_initiator_id(td)

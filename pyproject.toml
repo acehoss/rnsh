@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "rnsh"
-version = "0.1.5"
+version = "0.1.6"
 description = "Shell over Reticulum"
 authors = ["acehoss <acehoss@acehoss.net>"]
 license = "MIT"
