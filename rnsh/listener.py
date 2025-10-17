@@ -158,7 +158,10 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
         except Exception as e:
             log.error(f"Error looking up shell: {e}")
         log.info(f"Using {shell} for default command.")
-        _cmd = [shell] if shell else None
+        # Ensure a sane shell default. Fall back to /bin/sh if lookup fails.
+        if not shell or len(shell) == 0:
+            shell = "/bin/sh"
+        _cmd = [shell]
     else:
         log.info(f"Using command {shlex.join(_cmd)}")
 

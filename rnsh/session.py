@@ -311,7 +311,7 @@ class ListenerSession:
 
         try:
             self.process = process.CallbackSubprocess(argv=self.cmdline,
-                                                      env={"TERM": self.term or os.environ.get("TERM", None),
+                                                      env={"TERM": self.term or os.environ.get("TERM") or "xterm",
                                                             "RNS_REMOTE_IDENTITY": (RNS.prettyhexrep(self.remote_identity.hash)
                                                                 if self.remote_identity and self.remote_identity.hash else "")},
                                                       loop=self.loop,
