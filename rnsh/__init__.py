@@ -29,14 +29,22 @@ def _get_version():
         import pkg_resources
         return pkg_resources.get_distribution("rnsh").version
 
-    def tomli_version():
-        import tomli
-        return tomli.load(open(os.path.join(os.path.dirname(module_dir), "pyproject.toml"), "rb"))["tool"]["poetry"]["version"]
+    def toml_version():
+        # Prefer stdlib tomllib (Python >= 3.11); fall back to tomli if available
+        try:
+            import tomllib as _toml
+        except Exception:
+            try:
+                import tomli as _toml
+            except Exception:
+                raise
+        with open(os.path.join(os.path.dirname(module_dir), "pyproject.toml"), "rb") as f:
+            return _toml.load(f)["tool"]["poetry"]["version"]
 
     try:
         if (os.path.isfile(os.path.join(os.path.dirname(module_dir), "pyproject.toml"))):
             try:
-                return tomli_version()
+                return toml_version()
             except:
                 return "0.0.0"
         else:
