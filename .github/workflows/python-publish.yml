@@ -24,9 +24,14 @@ jobs:
     runs-on: [self-hosted, linux]
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
+          # Ensure we only fetch the current ref, and avoid fetching tags to prevent
+          # 'would clobber existing tag' on self-hosted runners with cached repos
           fetch-depth: 1
+          fetch-tags: false
+          clean: true
+          ref: ${{ github.ref }}
 
       - name: Set up Python 3.9
         uses: actions/setup-python@v4
@@ -53,7 +58,7 @@ jobs:
 
 
       - name: Test with pytest
-        run: poetry run pytest -m "not skip_ci" tests
+        run: poetry run pytest -q
         
         
       - name: Build package
