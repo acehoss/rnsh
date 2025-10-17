@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "rnsh"
-version = "0.1.6"
+version = "0.1.7"
 description = "Shell over Reticulum"
 authors = ["acehoss <acehoss@acehoss.net>"]
 license = "MIT"
@@ -24,6 +24,9 @@ rns = {version = "^0.9.0", allow-prereleases = true}
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+markers = [
+    "skip_ci: marks tests that should not be run in CI builds (deselect with '-m \"not skip_ci\"')"
+]
 
 [build-system]
 requires = ["poetry-core"]
