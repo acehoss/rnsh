@@ -72,8 +72,8 @@ class RnsHandler(Handler):
         if rnsloglevel == RNS.LOG_INFO:
             return logging.INFO
         if rnsloglevel >= RNS.LOG_VERBOSE:
-            return RNS.LOG_DEBUG
-        return RNS.LOG_DEBUG
+            return logging.DEBUG
+        return logging.DEBUG
 
     @classmethod
     def set_log_level_with_rns_level(cls, rns_log_level: int):
@@ -156,3 +156,15 @@ def _rns_log(msg, level=3, _override_destination=False):
 
 
 RNS.log = _rns_log
+
+
+def compute_target_rns_loglevel(verbosity: int, quietness: int, base_level: int = RNS.LOG_INFO) -> int:
+    try:
+        target = int(base_level) + int(verbosity) - int(quietness)
+        if target < RNS.LOG_CRITICAL:
+            target = RNS.LOG_CRITICAL
+        if target > RNS.LOG_DEBUG:
+            target = RNS.LOG_DEBUG
+        return target
+    except Exception:
+        return base_level

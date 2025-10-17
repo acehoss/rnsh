@@ -173,7 +173,7 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
         raise RemoteExecutionError("Invalid destination entered. Check your input.")
 
     if _reticulum is None:
-        targetloglevel = RNS.LOG_ERROR + verbosity - quietness
+        targetloglevel = rnslogging.compute_target_rns_loglevel(verbosity, quietness, RNS.LOG_INFO)
         _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
         rnslogging.RnsHandler.set_log_level_with_rns_level(targetloglevel)
 

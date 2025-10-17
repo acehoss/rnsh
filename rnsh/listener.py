@@ -136,11 +136,8 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
         pass
 
 
-    # More -v should LOWER the threshold (more chatty); more -q should RAISE it (quieter)
-    try:
-        targetloglevel = max(RNS.LOG_DEBUG, RNS.LOG_INFO - int(verbosity) + int(quietness))
-    except Exception:
-        targetloglevel = RNS.LOG_INFO
+    # More -v should increase verbosity (higher RNS.loglevel); -q should decrease it
+    targetloglevel = rnslogging.compute_target_rns_loglevel(verbosity, quietness, RNS.LOG_INFO)
     _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
     rnslogging.RnsHandler.set_log_level_with_rns_level(targetloglevel)
     _identity = rnsh.rnsh.prepare_identity(identitypath, service_name)
