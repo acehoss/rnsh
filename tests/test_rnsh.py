@@ -10,6 +10,7 @@ import time
 import asyncio
 import re
 import os
+import sys
 
 
 def test_version():
@@ -17,7 +18,6 @@ def test_version():
     assert rnsh.__version__ != "0.0.1"
 
 
-@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_wrapper():
     with tests.helpers.tempdir() as td:
@@ -32,11 +32,10 @@ async def test_wrapper():
 
 
 
-@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_rnsh_listen_start_stop():
     with tests.helpers.tempdir() as td:
-        with tests.helpers.SubprocessReader(argv=shlex.split(f"poetry run rnsh -l --config \"{td}\" -n -C -vvvvvv -- /bin/ls")) as wrapper:
+        with tests.helpers.SubprocessReader(argv=shlex.split(f"{sys.executable} -m rnsh.rnsh -l --config \"{td}\" -n -C -vvvvvv -- /bin/ls")) as wrapper:
             wrapper.start()
             await asyncio.sleep(0.1)
             assert wrapper.process.running
@@ -56,7 +55,7 @@ async def test_rnsh_listen_start_stop():
 
 
 async def get_listener_id_and_dest(td: str) -> tuple[str, str]:
-    with tests.helpers.SubprocessReader(name="getid", argv=shlex.split(f"poetry run -- rnsh -l -c \"{td}\" -p")) as wrapper:
+    with tests.helpers.SubprocessReader(name="getid", argv=shlex.split(f"{sys.executable} -m rnsh.rnsh -l -c \"{td}\" -p")) as wrapper:
         wrapper.start()
         await asyncio.sleep(0.1)
         assert wrapper.process.running
@@ -79,7 +78,7 @@ async def get_listener_id_and_dest(td: str) -> tuple[str, str]:
 
 
 async def get_initiator_id(td: str) -> str:
-    with tests.helpers.SubprocessReader(name="getid", argv=shlex.split(f"poetry run -- rnsh -c \"{td}\" -p")) as wrapper:
+    with tests.helpers.SubprocessReader(name="getid", argv=shlex.split(f"{sys.executable} -m rnsh.rnsh -c \"{td}\" -p")) as wrapper:
         wrapper.start()
         await asyncio.sleep(0.1)
         assert wrapper.process.running
@@ -98,7 +97,6 @@ async def get_initiator_id(td: str) -> str:
 
 
 
-@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_rnsh_get_listener_id_and_dest() -> [int]:
     with tests.helpers.tempdir() as td:
@@ -107,12 +105,11 @@ async def test_rnsh_get_listener_id_and_dest() -> [int]:
         assert len(dh) == 32
 
 
-@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_rnsh_service_name_changes_destination():
     with tests.helpers.tempdir() as td:
         # default service
-        with tests.helpers.SubprocessReader(name="getid1", argv=shlex.split(f"poetry run -- rnsh -l -c \"{td}\" -p")) as w1:
+        with tests.helpers.SubprocessReader(name="getid1", argv=shlex.split(f"{sys.executable} -m rnsh.rnsh -l -c \"{td}\" -p")) as w1:
             w1.start()
             await tests.helpers.wait_for_condition_async(lambda: not w1.process.running, 5)
             text1 = w1.read().decode("utf-8").replace("\r", "").replace("\n", "")
@@ -121,7 +118,7 @@ async def test_rnsh_service_name_changes_destination():
             dh1 = m1.group(2)
 
         # custom service name should use different identity file and thus different destination
-        with tests.helpers.SubprocessReader(name="getid2", argv=shlex.split(f"poetry run -- rnsh -l -s custom -c \"{td}\" -p")) as w2:
+        with tests.helpers.SubprocessReader(name="getid2", argv=shlex.split(f"{sys.executable} -m rnsh.rnsh -l -s custom -c \"{td}\" -p")) as w2:
             w2.start()
             await tests.helpers.wait_for_condition_async(lambda: not w2.process.running, 5)
             text2 = w2.read().decode("utf-8").replace("\r", "").replace("\n", "")
@@ -133,7 +130,6 @@ async def test_rnsh_service_name_changes_destination():
         assert dh1 != dh2
 
 
-@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_rnsh_get_initiator_id() -> [int]:
     with tests.helpers.tempdir() as td:
@@ -151,8 +147,8 @@ async def do_connected_test(listener_args: str, initiator_args: str, test: calla
         assert "dh" in initiator_args
         initiator_args = initiator_args.replace("dh", dh)
         listener_args = listener_args.replace("iih", iih)
-        with tests.helpers.SubprocessReader(name="listener", argv=shlex.split(f"poetry run -- rnsh -l -c \"{td}\" {listener_args}")) as listener, \
-                tests.helpers.SubprocessReader(name="initiator", argv=shlex.split(f"poetry run -- rnsh -q -c \"{td}\" {initiator_args}")) as initiator:
+        with tests.helpers.SubprocessReader(name="listener", argv=shlex.split(f"{sys.executable} -m rnsh.rnsh -l -c \"{td}\" {listener_args}")) as listener, \
+                tests.helpers.SubprocessReader(name="initiator", argv=shlex.split(f"{sys.executable} -m rnsh.rnsh -q -c \"{td}\" {initiator_args}")) as initiator:
             # listener startup
             listener.start()
             await asyncio.sleep(0.1)
@@ -181,7 +177,6 @@ async def do_connected_test(listener_args: str, initiator_args: str, test: calla
             assert not listener.process.running
 
 
-@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_rnsh_get_echo_through():
     cwd = os.getcwd()
@@ -197,7 +192,6 @@ async def test_rnsh_get_echo_through():
     await do_connected_test("-n -C -- /bin/pwd", "dh", test)
 
 
-@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_rnsh_no_ident():
     cwd = os.getcwd()
@@ -213,7 +207,6 @@ async def test_rnsh_no_ident():
     await do_connected_test("-n -C -- /bin/pwd", "-N dh", test)
 
 
-@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_rnsh_invalid_ident():
     cwd = os.getcwd()
@@ -229,7 +222,6 @@ async def test_rnsh_invalid_ident():
     await do_connected_test("-a 12345678901234567890123456789012 -C -- /bin/pwd", "dh", test)
 
 
-@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_rnsh_valid_ident():
     cwd = os.getcwd()

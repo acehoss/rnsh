@@ -24,10 +24,6 @@ rns = {version = "^0.9.0", allow-prereleases = true}
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
-markers = [
-    "skip_ci: marks tests that should not be run in CI builds (deselect with '-m \"not skip_ci\"')"
-]
-addopts = "-m 'not skip_ci'"
 
 [build-system]
 requires = ["poetry-core"]
