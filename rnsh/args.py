@@ -23,7 +23,7 @@ Usage:
             [-b <period>] [-n] [-a <identity_hash>] ([-a <identity_hash>] ...) [-A | -C]
             [[--] <program> [<arg> ...]]
     rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] -p
-    rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] [-N] [-m] [-w <timeout>] 
+    rnsh [-c <configdir>] [-i <identityfile>] [-v... | -q...] [-N] [-m] [-w <timeout>] [-T]
          <destination_hash> [[--] <program> [<arg> ...]]
     rnsh -h
     rnsh --version
@@ -49,6 +49,7 @@ Options:
     -C --no-remote-command       Disable executing command line from remote
     -m --mirror                  Client returns with code of remote process
     -w TIME --timeout TIME       Specify client connect and request timeout in seconds
+    -T --no-tty                  Force pipe mode (no TTY); useful for ProxyCommand
     -q --quiet                   Increase quietness (move level up), multiple increases effect
                                           DEFAULT LOGGING LEVEL
                                                   CRITICAL (silent)
@@ -106,6 +107,7 @@ class Args:
                 self.program_args = args.get("<arg>", None) or []
             self.no_id = args.get("--no-id", None) or False
             self.mirror = args.get("--mirror", None) or False
+            self.no_tty = args.get("--no-tty", None) or False
             timeout = args.get("--timeout", None)
             self.timeout = None
             try:
