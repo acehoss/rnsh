@@ -49,7 +49,7 @@ Options:
     -C --no-remote-command       Disable executing command line from remote
     -m --mirror                  Client returns with code of remote process
     -w TIME --timeout TIME       Specify client connect and request timeout in seconds
-    -T --no-tty                  Force pipe mode (no TTY); useful for ProxyCommand
+    -T --no-tty                  Force pipe mode (no TTY); useful for ssh ProxyCommand
     -q --quiet                   Increase quietness (move level up), multiple increases effect
                                           DEFAULT LOGGING LEVEL
                                                   CRITICAL (silent)
