@@ -233,9 +233,10 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
         loop = asyncio.get_running_loop()
         state = InitiatorState.IS_INITIAL
         # Determine pipe/TTY mode: force pipe if no_tty, otherwise auto-detect
-        is_stdin_pipe = no_tty or not os.isatty(sys.stdin.fileno())
-        is_stdout_pipe = no_tty or not os.isatty(sys.stdout.fileno())
-        is_stderr_pipe = no_tty or not os.isatty(sys.stderr.fileno())
+        use_tty = not no_tty
+        is_stdin_pipe = not use_tty or not os.isatty(sys.stdin.fileno())
+        is_stdout_pipe = not use_tty or not os.isatty(sys.stdout.fileno())
+        is_stderr_pipe = not use_tty or not os.isatty(sys.stderr.fileno())
         data_buffer = bytearray(sys.stdin.buffer.read()) if is_stdin_pipe else bytearray()
         line_buffer = bytearray()
 
@@ -318,7 +319,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                 in_data = process.tty_read(sys.stdin.fileno())
                 if in_data is not None:
                     # In no-tty mode, skip escape sequence processing
-                    if no_tty:
+                    if not use_tty:
                         data_buffer.extend(in_data)
                     else:
                         data = bytearray()
@@ -377,7 +378,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
         # Skip terminal attribute gathering in no-tty mode
         tcattr = None
         rows, cols, hpix, vpix = (None, None, None, None)
-        if not no_tty:
+        if use_tty:
             try:
                 tcattr = termios.tcgetattr(0)
                 rows, cols, hpix, vpix = process.tty_get_winsize(0)
@@ -405,7 +406,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                                                      vpix=vpix))
 
         # Skip window resize handling in no-tty mode
-        if not no_tty:
+        if use_tty:
             loop.add_signal_handler(signal.SIGWINCH, sigwinch_handler)
         _finished = asyncio.Event()
         loop.add_signal_handler(signal.SIGINT, functools.partial(_sigint_handler, signal.SIGINT, loop))
@@ -424,7 +425,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                     if isinstance(message, protocol.StreamDataMessage):
                         if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDOUT:
                             if message.data and len(message.data) > 0:
-                                if not no_tty:
+                                if use_tty:
                                     ttyRestorer.raw()
                                 log.debug(f"stdout: {message.data}")
                                 os.write(1, message.data)
@@ -433,7 +434,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                                 os.close(1)
                         if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDERR:
                             if message.data and len(message.data) > 0:
-                                if not no_tty:
+                                if use_tty:
                                     ttyRestorer.raw()
                                 log.debug(f"stdout: {message.data}")
                                 os.write(2, message.data)
@@ -495,7 +496,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                         processed = True
 
                 # send window change, but rate limited (skip in no-tty mode)
-                if not no_tty and winch and time.time() - last_winch > _link.rtt * 25:
+                if use_tty and winch and time.time() - last_winch > _link.rtt * 25:
                     last_winch = time.time()
                     winch = False
                     with contextlib.suppress(Exception):
