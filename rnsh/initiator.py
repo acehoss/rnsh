@@ -226,13 +226,18 @@ async def _handle_error(errmsg: RNS.MessageBase):
 
 
 async def initiate(configdir: str, identitypath: str, verbosity: int, quietness: int, noid: bool, destination: str,
-                   timeout: float, command: [str] | None = None):
+                   timeout: float, command: [str] | None = None, no_tty: bool = False):
     global _finished, _link
     log = _get_logger("_initiate")
     with process.TTYRestorer(sys.stdin.fileno()) as ttyRestorer:
         loop = asyncio.get_running_loop()
         state = InitiatorState.IS_INITIAL
-        data_buffer = bytearray(sys.stdin.buffer.read()) if not os.isatty(sys.stdin.fileno()) else bytearray()
+        # Determine pipe/TTY mode: force pipe if no_tty, otherwise auto-detect
+        use_tty = not no_tty
+        is_stdin_pipe = not use_tty or not os.isatty(sys.stdin.fileno())
+        is_stdout_pipe = not use_tty or not os.isatty(sys.stdout.fileno())
+        is_stderr_pipe = not use_tty or not os.isatty(sys.stderr.fileno())
+        data_buffer = bytearray(sys.stdin.buffer.read()) if is_stdin_pipe else bytearray()
         line_buffer = bytearray()
 
         await _initiate_link(
@@ -313,80 +318,86 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
             try:
                 in_data = process.tty_read(sys.stdin.fileno())
                 if in_data is not None:
-                    data = bytearray()
-                    for b in bytes(in_data):
-                        c = chr(b)
-                        if c == "\r":
-                            pre_esc = True
-                            line_flush = True
-                            data.append(b)
-                        elif line_mode and c in flush_chars:
-                            pre_esc = False
-                            line_flush = True
-                            data.append(b)
-                        elif line_mode and (c == "\b" or c == "\x7f"):
-                            pre_esc = False
-                            if len(line_buffer)>0:
-                                line_buffer.pop(-1)
-                                blind_write_count -= 1
-                                os.write(1, "\b \b".encode("utf-8"))
-                        elif pre_esc == True and c == "~":
-                            pre_esc = False
-                            esc = True
-                        elif esc == True:
-                            ret = handle_escape(c)
-                            if ret != None:
-                                if ret != "~":
-                                    data.append(ord("~"))
-                                data.append(ord(ret))
-                            esc = False
-                        else:
-                            pre_esc = False
-                            data.append(b)
-
-                    if not line_mode:
-                        data_buffer.extend(data)
+                    # In no-tty mode, skip escape sequence processing
+                    if not use_tty:
+                        data_buffer.extend(in_data)
                     else:
-                        line_buffer.extend(data)
-                        if line_flush:
-                            data_buffer.extend(line_buffer)
-                            line_buffer.clear()
-                            os.write(1, ("\b \b"*blind_write_count).encode("utf-8"))
-                            line_flush = False
-                            blind_write_count = 0
+                        data = bytearray()
+                        for b in bytes(in_data):
+                            c = chr(b)
+                            if c == "\r":
+                                pre_esc = True
+                                line_flush = True
+                                data.append(b)
+                            elif line_mode and c in flush_chars:
+                                pre_esc = False
+                                line_flush = True
+                                data.append(b)
+                            elif line_mode and (c == "\b" or c == "\x7f"):
+                                pre_esc = False
+                                if len(line_buffer)>0:
+                                    line_buffer.pop(-1)
+                                    blind_write_count -= 1
+                                    os.write(1, "\b \b".encode("utf-8"))
+                            elif pre_esc == True and c == "~":
+                                pre_esc = False
+                                esc = True
+                            elif esc == True:
+                                ret = handle_escape(c)
+                                if ret != None:
+                                    if ret != "~":
+                                        data.append(ord("~"))
+                                    data.append(ord(ret))
+                                esc = False
+                            else:
+                                pre_esc = False
+                                data.append(b)
+
+                        if not line_mode:
+                            data_buffer.extend(data)
                         else:
-                            os.write(1, data)
-                            blind_write_count += len(data)
+                            line_buffer.extend(data)
+                            if line_flush:
+                                data_buffer.extend(line_buffer)
+                                line_buffer.clear()
+                                os.write(1, ("\b \b"*blind_write_count).encode("utf-8"))
+                                line_flush = False
+                                blind_write_count = 0
+                            else:
+                                os.write(1, data)
+                                blind_write_count += len(data)
 
             except EOFError:
-                if os.isatty(0):
+                if not is_stdin_pipe:
                     data_buffer.extend(process.CTRL_D)
                 stdin_eof = True
                 process.tty_unset_reader_callbacks(sys.stdin.fileno())
 
         process.tty_add_reader_callback(sys.stdin.fileno(), stdin)
 
+        # Skip terminal attribute gathering in no-tty mode
         tcattr = None
         rows, cols, hpix, vpix = (None, None, None, None)
-        try:
-            tcattr = termios.tcgetattr(0)
-            rows, cols, hpix, vpix = process.tty_get_winsize(0)
-        except:
+        if use_tty:
             try:
-                tcattr = termios.tcgetattr(1)
-                rows, cols, hpix, vpix = process.tty_get_winsize(1)
+                tcattr = termios.tcgetattr(0)
+                rows, cols, hpix, vpix = process.tty_get_winsize(0)
             except:
                 try:
-                    tcattr = termios.tcgetattr(2)
-                    rows, cols, hpix, vpix = process.tty_get_winsize(2)
+                    tcattr = termios.tcgetattr(1)
+                    rows, cols, hpix, vpix = process.tty_get_winsize(1)
                 except:
-                    pass
+                    try:
+                        tcattr = termios.tcgetattr(2)
+                        rows, cols, hpix, vpix = process.tty_get_winsize(2)
+                    except:
+                        pass
 
         await _spin(lambda: channel.is_ready_to_send(), "Waiting for channel...", 1, quietness > 0)
         channel.send(protocol.ExecuteCommandMesssage(cmdline=command,
-                                                     pipe_stdin=not os.isatty(0),
-                                                     pipe_stdout=not os.isatty(1),
-                                                     pipe_stderr=not os.isatty(2),
+                                                     pipe_stdin=is_stdin_pipe,
+                                                     pipe_stdout=is_stdout_pipe,
+                                                     pipe_stderr=is_stderr_pipe,
                                                      tcflags=tcattr,
                                                      term=os.environ.get("TERM", None),
                                                      rows=rows,
@@ -394,7 +405,9 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                                                      hpix=hpix,
                                                      vpix=vpix))
 
-        loop.add_signal_handler(signal.SIGWINCH, sigwinch_handler)
+        # Skip window resize handling in no-tty mode
+        if use_tty:
+            loop.add_signal_handler(signal.SIGWINCH, sigwinch_handler)
         _finished = asyncio.Event()
         loop.add_signal_handler(signal.SIGINT, functools.partial(_sigint_handler, signal.SIGINT, loop))
         loop.add_signal_handler(signal.SIGTERM, functools.partial(_sigint_handler, signal.SIGTERM, loop))
@@ -412,7 +425,8 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                     if isinstance(message, protocol.StreamDataMessage):
                         if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDOUT:
                             if message.data and len(message.data) > 0:
-                                ttyRestorer.raw()
+                                if use_tty:
+                                    ttyRestorer.raw()
                                 log.debug(f"stdout: {message.data}")
                                 os.write(1, message.data)
                                 sys.stdout.flush()
@@ -420,7 +434,8 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                                 os.close(1)
                         if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDERR:
                             if message.data and len(message.data) > 0:
-                                ttyRestorer.raw()
+                                if use_tty:
+                                    ttyRestorer.raw()
                                 log.debug(f"stdout: {message.data}")
                                 os.write(2, message.data)
                                 sys.stderr.flush()
@@ -480,8 +495,8 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                         sent_eof = eof
                         processed = True
 
-                # send window change, but rate limited
-                if winch and time.time() - last_winch > _link.rtt * 25:
+                # send window change, but rate limited (skip in no-tty mode)
+                if use_tty and winch and time.time() - last_winch > _link.rtt * 25:
                     last_winch = time.time()
                     winch = False
                     with contextlib.suppress(Exception):

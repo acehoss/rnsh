@@ -146,7 +146,8 @@ async def _rnsh_cli_main():
                                                noid=args.no_id,
                                                destination=args.destination,
                                                timeout=args.timeout,
-                                               command=args.command_line
+                                               command=args.command_line,
+                                               no_tty=args.no_tty
         )
         return return_code if args.mirror else 0
     else:
