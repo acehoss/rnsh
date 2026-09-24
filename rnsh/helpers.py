@@ -19,7 +19,7 @@ class SleepRate:
     def next_sleep_time(self) -> float:
         old_last_wake = self.last_wake
         self.last_wake = time.time()
-        next_wake = max(old_last_wake + 0.01, self.last_wake)
+        next_wake = max(old_last_wake + self.target_period, self.last_wake)
         sleep_for = next_wake - self.last_wake
         return sleep_for if sleep_for > 0 else 0
 
