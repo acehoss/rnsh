@@ -77,7 +77,7 @@ protocol layers of the software.
 ## Quickstart
 
 Tested (thus far) on Python 3.11 macOS 13.1 ARM64. Requires
-Python 3.10+ on Linux or Unix. WSL probably works. 
+Python 3.11+ on Linux or Unix. WSL probably works.
 Cygwin might work, too.
 
 - Activate a virtualenv
