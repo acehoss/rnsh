@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from RNS.Channel import TPacket, MessageState, ChannelOutletBase, Channel
+from RNS.Channel import Channel
 from typing import Callable
 
 logging.getLogger().setLevel(logging.DEBUG)
