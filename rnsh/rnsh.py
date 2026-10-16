@@ -98,7 +98,13 @@ def print_identity(configdir, identitypath, service_name, include_destination: b
     print("Identity     : " + str(identity))
     if include_destination:
         print("Listening on : " + RNS.prettyhexrep(destination.hash))
-    exit(0)
+    # Nothing was announced or linked, so skip Reticulum's orderly teardown.
+    # Since RNS 1.5.5 detaching AutoInterface joins its UDP server and discovery
+    # threads, which holds the process for ~8 s after the identity is printed.
+    # exit(0) here would also raise SystemExit inside the event loop, which
+    # rnsh_cli() swallows and turns into exit status 1.
+    sys.stdout.flush()
+    os._exit(0)
 
 
 verbose_set = False

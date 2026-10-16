@@ -11,6 +11,8 @@ on:
   pull_request:
     types:
       - opened
+      - synchronize
+      - reopened
     branches:
       - 'main'
     paths-ignore:
@@ -29,10 +31,10 @@ jobs:
           clean: true
           ref: ${{ github.ref }}
 
-      - name: Set up Python 3.9
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
-          python-version: 3.9
+          python-version: "3.11"
 
       - name: Install Poetry Action
         uses: snok/install-poetry@v1.3.3
