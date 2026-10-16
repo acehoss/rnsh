@@ -54,6 +54,17 @@ async def test_rnsh_listen_start_stop():
             assert not wrapper.process.running
 
 
+# RNS logs to stdout, and on RNS 1.5.x the shared-instance client intermittently logs
+# "Shared instance RPC failed while setting destination data use" into the initiator's
+# output. Drop RNS log lines before comparing command output.
+_RNS_LOG_LINE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[\w+\]")
+
+
+def _command_output(data: bytes) -> str:
+    lines = data.decode("utf-8").replace("\r", "").split("\n")
+    return "".join(line for line in lines if not _RNS_LOG_LINE.match(line))
+
+
 async def get_listener_id_and_dest(td: str) -> tuple[str, str]:
     with tests.helpers.SubprocessReader(name="getid", argv=shlex.split(f"{sys.executable} -m rnsh.rnsh -l -c \"{td}\" -p")) as wrapper:
         wrapper.start()
@@ -186,7 +197,7 @@ async def test_rnsh_get_echo_through():
         start_time = time.time()
         while initiator.return_code is None and time.time() - start_time < 3:
             await asyncio.sleep(0.1)
-        text = initiator.read().decode("utf-8").replace("\r", "").replace("\n", "")
+        text = _command_output(initiator.read())
         assert text == cwd
 
     await do_connected_test("-n -C -- /bin/pwd", "dh", test)
@@ -201,7 +212,7 @@ async def test_rnsh_no_ident():
         start_time = time.time()
         while initiator.return_code is None and time.time() - start_time < 3:
             await asyncio.sleep(0.1)
-        text = initiator.read().decode("utf-8").replace("\r", "").replace("\n", "")
+        text = _command_output(initiator.read())
         assert text == cwd
 
     await do_connected_test("-n -C -- /bin/pwd", "-N dh", test)
@@ -216,7 +227,7 @@ async def test_rnsh_invalid_ident():
         start_time = time.time()
         while initiator.return_code is None and time.time() - start_time < 3:
             await asyncio.sleep(0.1)
-        text = initiator.read().decode("utf-8").replace("\r", "").replace("\n", "")
+        text = _command_output(initiator.read())
         assert "not allowed" in text
 
     await do_connected_test("-a 12345678901234567890123456789012 -C -- /bin/pwd", "dh", test)
@@ -231,7 +242,7 @@ async def test_rnsh_valid_ident():
         start_time = time.time()
         while initiator.return_code is None and time.time() - start_time < 3:
             await asyncio.sleep(0.1)
-        text = initiator.read().decode("utf-8").replace("\r", "").replace("\n", "")
+        text = _command_output(initiator.read())
         assert (text == cwd)
 
     await do_connected_test("-a iih -C -- /bin/pwd", "dh", test)
