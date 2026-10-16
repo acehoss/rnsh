@@ -192,13 +192,13 @@ class ListenerSession:
         self._set_state(LSState.LSSTATE_WAIT_VERS)
 
     @classmethod
-    async def pump_all(cls) -> True:
+    async def pump_all(cls) -> bool:
         processed_any = False
         for session in cls.sessions:
             processed = session.pump()
             processed_any = processed_any or processed
             await asyncio.sleep(0)
-
+        return processed_any
 
     @classmethod
     async def terminate_all(cls, reason: str):

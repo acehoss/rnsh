@@ -225,7 +225,7 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
         _destination.announce()
 
     last_announce = time.time()
-    sleeper = helpers.SleepRate(0.01)
+    sleeper = helpers.SleepRate(0.25)
 
     try:
         while not await _check_finished():
