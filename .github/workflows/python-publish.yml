@@ -16,7 +16,7 @@ on:
     - 'release/v*' # Push events to matching v*, i.e. v1.0, v20.15.10
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   deploy:
@@ -92,7 +92,7 @@ jobs:
         id: create_release
         uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_API_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
           release_name: ${{ steps.set_version.outputs.tag }}
@@ -102,7 +102,7 @@ jobs:
       - name: Upload Release Artefact
         uses: actions/upload-release-asset@v1
         env:
-            GITHUB_TOKEN: ${{ secrets.GH_API_TOKEN }}
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./dist/rnsh-${{ steps.set_version.outputs.no-v }}-py3-none-any.whl
