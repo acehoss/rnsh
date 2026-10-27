@@ -4,6 +4,15 @@
 [![PyPI version](https://badge.fury.io/py/rnsh.svg)](https://badge.fury.io/py/rnsh)  
 ![PyPI - Downloads](https://img.shields.io/pypi/dw/rnsh?color=informational&label=Installs&logo=pypi)
 
+> **This package is deprecated.** `rnsh` is now bundled with Reticulum and is
+> maintained there by Mark Qvist. Install it with `pip install rns` (1.3.9 or
+> later) and the `rnsh` command is included. v0.1.8 is the final release of this
+> standalone package. It exists only to deliver the authentication fix below to
+> existing installs; use the bundled copy for anything new. Installing both
+> packages in the same environment makes them overwrite each other's `rnsh`
+> command, so uninstall this one (`pip uninstall rnsh`) once you have moved over.
+
+
 `rnsh` is a utility written in Python that facilitates shell 
 sessions over [Reticulum](https://reticulum.network) networks. 
 It is based on the `rnx` utility that ships with Reticulum and
@@ -25,6 +34,15 @@ point still may introduce breaking changes, especially in the
 protocol layers of the software.
 
 ## Recent Changes
+### v0.1.8
+- **Security:** a listener using an allowed-identities list (the default, without
+  `-A`) could be made to run commands for an identity that was not on the list.
+  Rejected identities are no longer advanced past identification. Listeners
+  started with `-A` were not affected. The same fix shipped in the Reticulum
+  bundled `rnsh` in rns 1.3.9.
+- Final release. The package is deprecated in favour of the `rnsh` bundled with
+  `rns`; a notice is printed at startup (suppressed by `-q`).
+
 ### v0.1.6
 - Fix listener `-s/--service` parsing so provided service names are honored. This ensures
   different service names use distinct identity files and destination hashes.

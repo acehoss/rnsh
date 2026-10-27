@@ -118,6 +118,11 @@ async def _rnsh_cli_main():
     args = rnsh.args.Args(sys.argv)
     verbose_set = args.verbose > 0
 
+    if args.quiet == 0:
+        print("rnsh: this standalone package is deprecated. rnsh is now bundled with "
+              "Reticulum: `pip install rns` (1.3.9 or later) provides the rnsh command. "
+              "Use -q to silence this notice.", file=sys.stderr)
+
     if args.print_identity:
         print_identity(args.config, args.identity, args.service_name, args.listen)
         return 0
