@@ -181,3 +181,13 @@ def test_identify_twice_after_rejection_does_not_revive(listener):
     outlet.identified_cb(outlet, ALLOWED)
     assert not sess.authenticated
     assert sess.state == LSState.LSSTATE_ERROR
+
+
+def test_exploit_sequence_never_starts_a_process(listener):
+    # The bypass as an attacker would drive it, with no assertions on the new
+    # bookkeeping: on the pre-fix code this fails because the command runs.
+    sess, outlet, channel, loop = listener
+    outlet.identified_cb(outlet, STRANGER)
+    channel.handler(protocol.VersionInfoMessage())
+    channel.handler(_execute(["/bin/true"]))
+    assert ProcessSpy.started == []
