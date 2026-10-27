@@ -102,7 +102,12 @@ class ListenerSession:
         self.return_code: int | None = None
         self.return_code_sent = False
         self.process: process.CallbackSubprocess | None = None
+        # Set only when the initiator's identity has been checked against the allow list (or
+        # auth is disabled). Nothing past identification may run without it.
+        self.authenticated = False
+        self.terminated = False
         if self.allow_all:
+            self.authenticated = True
             self._set_state(LSState.LSSTATE_WAIT_VERS)
         else:
             self._set_state(LSState.LSSTATE_WAIT_IDENT)
@@ -145,6 +150,7 @@ class ListenerSession:
             if error and self.state != LSState.LSSTATE_TEARDOWN:
                 with contextlib.suppress(Exception):
                     self.send(protocol.ErrorMessage(error, True))
+            self.terminated = True
             self.state = LSState.LSSTATE_ERROR
             self._terminate_process()
             self._call(self._prune, max(self.outlet.rtt * 3, process.CallbackSubprocess.PROCESS_PIPE_TIME+5))
@@ -182,14 +188,20 @@ class ListenerSession:
             return
 
         self._log.info(f"initiator_identified {identity} on link {outlet}")
-        if self.state not in [LSState.LSSTATE_WAIT_IDENT, LSState.LSSTATE_WAIT_VERS]:
+        if self.terminated or self.state not in [LSState.LSSTATE_WAIT_IDENT, LSState.LSSTATE_WAIT_VERS]:
             self._protocol_error(LSState.LSSTATE_WAIT_IDENT.name)
+            return
 
-        if not self.allow_all and identity.hash not in self.allowed_identity_hashes and identity.hash not in self.allowed_file_identity_hashes:
+        if self.allow_all or identity.hash in self.allowed_identity_hashes \
+                or identity.hash in self.allowed_file_identity_hashes:
+            self.authenticated = True
+            self.remote_identity = identity
+            self._set_state(LSState.LSSTATE_WAIT_VERS)
+        else:
+            # terminate() only schedules the teardown; the session object stays reachable
+            # until then, so it must not advance past identification.
+            self.authenticated = False
             self.terminate("Identity is not allowed.")
-
-        self.remote_identity = identity
-        self._set_state(LSState.LSSTATE_WAIT_VERS)
 
     @classmethod
     async def pump_all(cls) -> bool:
@@ -285,6 +297,17 @@ class ListenerSession:
 
     def _start_cmd(self, cmdline: [str], pipe_stdin: bool, pipe_stdout: bool, pipe_stderr: bool, tcflags: [any],
                    term: str | None, rows: int, cols: int, hpix: int, vpix: int):
+        if self.terminated:
+            self._log.warning(f"Refusing to start command on terminated session: {cmdline}")
+            return
+        if not self.authenticated:
+            self._log.warning(f"Refusing to start command on unauthenticated session: {cmdline}")
+            self.terminate("Invalid state")
+            return
+        if self.state != LSState.LSSTATE_RUNNING:
+            self._log.warning(f"Refusing to start command in state {self.state.name}: {cmdline}")
+            self.terminate("Invalid state")
+            return
 
         self.cmdline = self.default_command
         if not self.allow_remote_command and cmdline and len(cmdline) > 0:
@@ -342,10 +365,17 @@ class ListenerSession:
             self.process.close_stdin()
 
     def _handle_message(self, message: RNS.MessageBase):
+        if self.terminated or self.state in [LSState.LSSTATE_ERROR, LSState.LSSTATE_TEARDOWN]:
+            self._log.error(f"Received packet, but in state {self.state.name}")
+            return
         if self.state == LSState.LSSTATE_WAIT_IDENT:
             # Ignore any messages until the initiator has identified to avoid race conditions
             # between identity announcement and early protocol messages.
             self._log.debug("Ignoring message while waiting for identification")
+            return
+        if not self.authenticated:
+            self._log.error(f"Received {message.__class__.__name__} on unauthenticated session in state {self.state.name}")
+            self.terminate("Invalid state")
             return
         if self.state == LSState.LSSTATE_WAIT_VERS:
             if not isinstance(message, protocol.VersionInfoMessage):
@@ -379,9 +409,6 @@ class ListenerSession:
                 # echo noop only on listener--used for keepalive/connectivity check
                 self.send(message)
                 return
-        elif self.state in [LSState.LSSTATE_ERROR, LSState.LSSTATE_TEARDOWN]:
-            self._log.error(f"Received packet, but in state {self.state.name}")
-            return
         else:
             self._protocol_error("unexpected message")
             return
